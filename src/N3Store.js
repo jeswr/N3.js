@@ -59,10 +59,10 @@ export default class N3Store {
     const index1 = index0[key0] || (index0[key0] = {});
     const index2 = index1[key1] || (index1[key1] = {});
     // Setting the key to _any_ value signals the presence of the quad
-    const existed = key2 in index2;
-    if (!existed)
+    const notExisted = !(key2 in index2);
+    if (notExisted)
       index2[key2] = null;
-    return !existed;
+    return notExisted;
   }
 
   // ### `_removeFromIndex` removes a quad from a three-layered index
