@@ -1,6 +1,31 @@
 import * as RDF from '@rdfjs/types';
 import { termToId, termFromId } from './N3DataFactory';
 
+// Note the indexes are just spo rotated
+// Same as just having 123 rotated
+
+const SUBJECT = 1;
+const PREDICATE = 2;
+const OBJECT = 3;
+
+const SPO = 1;
+const POS = 2;
+const OSP = 3;
+
+type Keys = 's' | 'p' | 'o';
+type Index = 'spo' | 'osp' | 'pos';
+
+const map = { s: 'po', p: 'os',  }
+
+Object.values
+
+export class Graphs {
+  private [SUBJECT] = {};
+  private [PREDICATE] = {};
+  private [OBJECT] = {};
+
+}
+
 export class N3EntityIndex {
   // This should *not* be written to outside of this class
   private ids: Record<string, number> = {};

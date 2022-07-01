@@ -90,6 +90,20 @@ export default class N3Store {
     const entityKeys = this._entities;
     const graph = termFromId(graphId, this._factory);
     const parts = { subject: null, predicate: null, object: null };
+    
+    
+    
+    
+    for (const key in [key0, key1, key2]) {
+      if (key) {
+
+      } else {
+
+      }
+    }
+
+    
+
 
     // If a key is specified, use only that part of index 0.
     if (key0) (tmp = index0, index0 = {})[key0] = tmp[key0];
@@ -324,7 +338,12 @@ export default class N3Store {
   // ### `removeMatches` removes all matching quads from the store
   // Setting any field to `undefined` or `null` indicates a wildcard.
   removeMatches(subject, predicate, object, graph) {
-    const stream = new Readable({ objectMode: true });
+    const stream = new Readable({
+      objectMode: true,
+      read() {
+
+      }
+    });
 
     stream._read = () => {
       for (const quad of this.readQuads(subject, predicate, object, graph))
@@ -337,6 +356,7 @@ export default class N3Store {
 
   // ### `deleteGraph` removes all triples with the given graph from the store
   deleteGraph(graph) {
+    // TODO: Just delete the graph objecwwwwwwt?
     return this.removeMatches(null, null, null, graph);
   }
 
@@ -364,6 +384,7 @@ export default class N3Store {
         isString(object)    && !(objectId    = ids[object]))
       return;
 
+    // TODO: Use 'spo', 'pos' etc.
     for (const graphId in graphs) {
       // Only if the specified graph contains triples, there can be results
       if (content = graphs[graphId]) {
