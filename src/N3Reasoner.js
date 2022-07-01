@@ -1,7 +1,35 @@
 import { termToId } from './N3DataFactory';
 
+// Caveats of multiple sources
+// - Need to do a `.has()` check first in order to ensure that the 'new'
+// - does not indeed already exist in another `N3Store`
+
+// Long term this might be simplified through an N3Union class
+// which exposes `.add()`, .`.read()` etc. over the union of all the N3Stores
+// but that is making things too complicated for now so leaving it
+
+// A performance hit that is probably going to crop up in this implementation
+// that we need to be aware of is that of quads duplicated across stores resulting
+// in multiple evaluations
+// I don't have a clean solution to tis off the top of my head
+
+
+function evaluateRule(graphs, rule, /* ... Some way of doing the has checks */) {
+
+}
+
 export default class N3Reasoner {
-  constructor(store) {
+  // Design:
+  // - Have one or more sources of data
+  // - Allow destination to be part of, or disjoint from the results (it should not change the outcome)
+  // - Should error if anything other than an N3store is provided
+
+
+
+  constructor(store, options) {
+
+
+
     this._store = store;
   }
 
