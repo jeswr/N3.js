@@ -11,7 +11,7 @@ import { termToId } from './N3DataFactory';
 // A performance hit that is probably going to crop up in this implementation
 // that we need to be aware of is that of quads duplicated across stores resulting
 // in multiple evaluations
-// I don't have a clean solution to tis off the top of my head
+// I don't have a clean solution to this off the top of my head
 
 
 function evaluateRule(graphs, rule, /* ... Some way of doing the has checks */) {
@@ -161,7 +161,7 @@ export default class N3Reasoner {
 
               const premise = [];
 
-              // Since these *will* be substited when we apply the rule,
+              // Since these *will* be substituted when we apply the rule,
               // we need to do this so that we index correctly in the subsequent section
               p.subject.value = p.subject.value || 1;
               p.object.value = p.object.value || 1;
