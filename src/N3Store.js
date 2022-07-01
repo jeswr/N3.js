@@ -640,6 +640,7 @@ export default class N3Store {
 
   // ### `createBlankNode` creates a new blank node, returning its name
   createBlankNode(suggestedName) {
+    // TODO: Make this directly reflect the create blankNode in the N3EntityIndex
     let name, index;
     // Generate a name based on the suggested name
     if (suggestedName) {

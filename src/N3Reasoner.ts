@@ -23,7 +23,7 @@ export default class N3Reasoner {
   // - Have one or more sources of data
   // - Allow destination to be part of, or disjoint from the results (it should not change the outcome)
   // - Should error if anything other than an N3store is provided
-
+  private _store: any;
 
 
   constructor(store, options) {
