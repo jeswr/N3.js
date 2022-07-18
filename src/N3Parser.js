@@ -864,6 +864,7 @@ export default class N3Parser {
 
   // ### `_readRDFStarTailOrGraph` reads the graph of a nested RDF* quad or the end of a nested RDF* triple
   _readRDFStarTailOrGraph(token) {
+    console.log('inside startailorgraph', token)
     if (token.type !== '>>') {
       // An entity means this is a quad (only allowed if not already inside a graph)
       if (this._supportsQuads && this._graph === null && (this._graph = this._readEntity(token)) !== undefined)
@@ -880,7 +881,19 @@ export default class N3Parser {
     // Read the quad and restore the previous context
     const quad = this._quad(this._subject, this._predicate, this._object,
       this._graph || this.DEFAULTGRAPH);
+    
+    console.log('before context restoration', this._subject, this._predicate, this._object, this._graph);
     this._restoreContext('<<', token);
+    console.log('after context restoration', this._subject, this._predicate, this._object, this._graph);
+    console.log(this._contextStack)
+
+    if (this._contextStack[this._contextStack.length - 1]?.type === 'list') {
+      // TODO: Either continue this custom list case here, or do a bigger refactor where
+      // rdfstar triples can only check a restricted syntax
+      // return this._error('Reified triples in lists are currently unsupported', token);
+      return this._readListItem;
+    }
+
     // If the triple was the subject, continue by reading the predicate.
     if (this._subject === null) {
       this._subject = quad;
@@ -1077,9 +1090,9 @@ export default class N3Parser {
       let error;
       this._callback = (e, t) => { e ? (error = e) : t && quads.push(t); };
       this._lexer.tokenize(input).every(token => {
-        // console.log(token);
+        console.log(token);
         this._readCallback = this._readCallback(token);
-        // console.log(this._readCallback);
+        console.log(this._readCallback);
         return this._readCallback;
       });
       if (error) throw error;
