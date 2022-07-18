@@ -865,6 +865,34 @@ describe('Lexer', () => {
         { type: '.', line: 3 },
         { type: 'eof', line: 3 }));
 
+
+    it('should tokenize an RDF* statement with IRIs {|',
+        shouldTokenize('<a> <b> <c> {| <d> <e> |}',
+          // { type: '<<', line: 1 },
+          { type: 'IRI', value: 'a', line: 1 },
+          { type: 'IRI', value: 'b', line: 1 },
+          { type: 'IRI', value: 'c', line: 1 },
+          { type: '{|', line: 1 },
+          { type: 'IRI', value: 'd', line: 1 },
+          { type: 'IRI', value: 'e', line: 1 },
+          { type: '|}', line: 1 },
+          { type: 'eof', line: 1 }));
+
+    it('should tokenize an RDF* statement with IRIs |{ |}',
+          shouldTokenize('<a> <b> <c> {| <d> <e>; <f> <g> |}',
+            // { type: '<<', line: 1 },
+            { type: 'IRI', value: 'a', line: 1 },
+            { type: 'IRI', value: 'b', line: 1 },
+            { type: 'IRI', value: 'c', line: 1 },
+            { type: '{|', line: 1 },
+            { type: 'IRI', value: 'd', line: 1 },
+            { type: 'IRI', value: 'e', line: 1 },
+            { type: ';', line: 1 },
+            { type: 'IRI', value: 'f', line: 1 },
+            { type: 'IRI', value: 'g', line: 1 },
+            { type: '|}', line: 1 },
+            { type: 'eof', line: 1 }));
+
     it('should not tokenize a wrongly closed RDF* statement with IRIs',
       shouldNotTokenize('<<<http://ex.org/?bla#foo> \n\t<http://ex.org/?bla#bar> \n\t<http://ex.org/?bla#boo>> .',
         'Unexpected ">" on line 3.'));

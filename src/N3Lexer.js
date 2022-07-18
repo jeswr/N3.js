@@ -301,12 +301,22 @@ export default class N3Lexer {
       case '(':
       case ')':
       case '{':
+        if (input.length > 1 && input[1] === '|') {
+          type = '{|', matchLength = 2;
+          break;
+        }
       case '}':
         if (!this._lineMode) {
           matchLength = 1;
           type = firstChar;
         }
         break;
+
+      case '|':
+        if (input.length > 1 && input[1] === '}') {
+          type = '|}', matchLength = 2;
+          break;
+        }
 
       default:
         inconclusive = true;
@@ -450,11 +460,13 @@ export default class N3Lexer {
   // ### `tokenize` starts the transformation of an N3 document into an array of tokens.
   // The input can be a string or a stream.
   tokenize(input, callback) {
+    console.log('tokenizing', input);
     this._line = 1;
 
     // If the input is a string, continuously emit tokens through the callback until the end
     if (typeof input === 'string') {
       this._input = this._readStartingBom(input);
+      console.log(this._input);
       // If a callback was passed, asynchronously call it
       if (typeof callback === 'function')
         queueMicrotask(() => this._tokenizeToEnd(callback, true));
@@ -474,6 +486,7 @@ export default class N3Lexer {
         input.setEncoding('utf8');
       // Adds the data chunk to the buffer and parses as far as possible
       input.on('data', data => {
+        console.log(data);
         if (this._input !== null && data.length !== 0) {
           // Prepend any previous pending writes
           if (this._pendingBuffer) {

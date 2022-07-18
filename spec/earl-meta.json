@@ -19,6 +19,7 @@
     "https://www.w3.org/TR/turtle/",
     "https://www.w3.org/TR/trig/",
     "https://www.w3.org/TR/n-triples/",
-    "https://www.w3.org/TR/n-quads/"
+    "https://www.w3.org/TR/n-quads/",
+    "https://w3c.github.io/rdf-star/"
   ]
 }

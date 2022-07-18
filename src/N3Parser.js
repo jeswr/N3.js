@@ -614,6 +614,18 @@ export default class N3Parser {
     case ',':
       next = this._readObject;
       break;
+    case '{|':
+      if (!this._supportsRDFStar)
+        return this._error('Unexpected RDF* syntax', token);
+          // TODO: Have error handling behavior here
+          // TODO: See if we can just emit and then save null context
+          // this._emit(this._subject, this._predicate, this._object, this.graph);
+      this._saveContext('{|', this._graph, this._subject, this._predicate, this._object);
+          // TODO: Optimize by not producing quad twice between here and emit
+      this._subject = this._quad(this._subject, this._predicate, this._object, this._graph || this.DEFAULTGRAPH);
+      this._predicate = null;
+      this._object = null;
+      return this._readPredicate;
     default:
       // An entity means this is a quad (only allowed if not already inside a graph)
       if (this._supportsQuads && this._graph === null && (graph = this._readEntity(token)) !== undefined) {
@@ -866,6 +878,39 @@ export default class N3Parser {
     }
   }
 
+
+  // ### `_readRDFStarTail` reads the end of a nested RDF* triple
+  _readExplicitRDFStarTail(token) {
+      // return this._error(`Expected |} but got ${token.type}`, token);
+    if (this._subject && this._predicate && this._object) {
+      this._emit(this._subject, this._predicate, this._object, this._graph);
+    }
+    if (token.type !== '|}')
+      return this._readPredicate;
+    this._restoreContext('{|', token);
+    return this._getContextEndReader();
+
+
+
+      // Read the quad and restore the previous context
+    const quad = this._quad(this._subject, this._predicate, this._object,
+      this._graph || this.DEFAULTGRAPH);
+
+
+    // this._restoreContext('<<', token);
+    // // If the triple was the subject, continue by reading the predicate.
+    // if (this._subject === null) {
+    //   this._subject = quad;
+    //   return this._readPredicate;
+    // }
+    // // If the triple was the object, read context end.
+    // else {
+    //   this._object = quad;
+    //   return this._getContextEndReader();
+    // }
+  }
+
+
   // ### `_getContextEndReader` gets the next reader function at the end of a context
   _getContextEndReader() {
     const contextStack = this._contextStack;
@@ -881,11 +926,15 @@ export default class N3Parser {
       return this._readFormulaTail;
     case '<<':
       return this._readRDFStarTailOrGraph;
+    case '{|':
+      return this._readExplicitRDFStarTail;
+      // throw new Error('boo');
     }
   }
 
   // ### `_emit` sends a quad through the callback
   _emit(subject, predicate, object, graph) {
+    console.log(1);
     this._callback(null, this._quad(subject, predicate, object, graph || this.DEFAULTGRAPH));
   }
 
@@ -1013,7 +1062,10 @@ export default class N3Parser {
       let error;
       this._callback = (e, t) => { e ? (error = e) : t && quads.push(t); };
       this._lexer.tokenize(input).every(token => {
-        return this._readCallback = this._readCallback(token);
+        console.log(token);
+        this._readCallback = this._readCallback(token);
+        console.log(this._readCallback);
+        return this._readCallback;
       });
       if (error) throw error;
       return quads;

@@ -1,4 +1,4 @@
-import { Parser, NamedNode, BlankNode, Quad, termFromId } from '../src/';
+import { Parser, NamedNode, BlankNode, Quad, termFromId, DataFactory } from '../src/';
 
 const BASE_IRI = 'http://example.org/';
 
@@ -936,6 +936,115 @@ describe('Parser', () => {
     it('should parse an RDF* triple with a triple with iris as subject correctly', () => {
       shouldParse('<<<a> <b> <c>>> <b> <c>.',
         [['a', 'b', 'c'], 'b', 'c']);
+    });
+
+    it('should parse an RDF* triple with a triple with iris as subject correctly', () => {
+      expect(new Parser().parse('<a> <b> <c> .')).to.deep.equal([ 
+        new Quad(
+          new NamedNode('a'),
+          new NamedNode('b'),
+          new NamedNode('c'),
+        )
+       ]);
+
+       console.log(new Parser().parse('<a> <b> <c> {| <d> <e> |} .').map(x => JSON.stringify(x, null, 2)))
+
+       expect(new Parser().parse('<a> <b> <c> {| <d> <e> |} .')).to.deep.equal([ 
+        new Quad(
+          new Quad(
+            new NamedNode('a'),
+            new NamedNode('b'),
+            new NamedNode('c'),
+          ),
+          new NamedNode('d'),
+          new NamedNode('e'),
+        ),
+        new Quad(
+          new NamedNode('a'),
+          new NamedNode('b'),
+          new NamedNode('c'),
+        ),
+       ])
+
+       expect(new Parser().parse('<a> <b> <c> {| <d> <e> . |} .')).to.deep.equal([ 
+        new Quad(
+          new Quad(
+            new NamedNode('a'),
+            new NamedNode('b'),
+            new NamedNode('c'),
+          ),
+          new NamedNode('d'),
+          new NamedNode('e'),
+        ),
+        new Quad(
+          new NamedNode('a'),
+          new NamedNode('b'),
+          new NamedNode('c'),
+        ),
+       ])
+
+      expect(new Parser().parse('<a> <b> <c> {| <d> <e> ; <f> <g> |} .')).to.deep.equal([ 
+        new Quad(
+          new Quad(
+            new NamedNode('a'),
+            new NamedNode('b'),
+            new NamedNode('c'),
+          ),
+          new NamedNode('d'),
+          new NamedNode('e'),
+        ),
+        new Quad(
+          new Quad(
+            new NamedNode('a'),
+            new NamedNode('b'),
+            new NamedNode('c'),
+          ),
+          new NamedNode('f'),
+          new NamedNode('g'),
+        ),
+        new Quad(
+          new NamedNode('a'),
+          new NamedNode('b'),
+          new NamedNode('c'),
+        ),
+       ])
+
+       const q = new Quad(
+        new NamedNode('http://example.com/ns#s'),
+        new NamedNode('http://example.com/ns#p'),
+        new Quad(
+          new NamedNode('http://example.com/ns#a'),
+          new NamedNode('http://example.com/ns#b'),
+          new NamedNode('http://example.com/ns#c'),
+        ),
+      );
+
+       expect(new Parser().parse('PREFIX : <http://example.com/ns#> \n :s :p <<:a :b :c>> {| :q :z |} .')).to.deep.equal([
+        new Quad(q, new NamedNode('http://example.com/ns#q'), new NamedNode('http://example.com/ns#z')),
+        q,
+       ])
+
+       const full = `
+       PREFIX :       <http://example/>
+PREFIX xsd:     <http://www.w3.org/2001/XMLSchema#>
+
+:G {
+  :s :p :o {| :source [ :graph <http://host1/> ;
+                        :date "2020-01-20"^^xsd:date
+                      ] ;
+              :source [ :graph <http://host2/> ;
+                        :date "2020-12-31"^^xsd:date
+                      ]
+            |} .
+}
+
+       `
+
+       expect(new Parser().parse(full)).to.deep.equal([
+        new Quad(q, new NamedNode('http://example.com/ns#q'), new NamedNode('http://example.com/ns#z')),
+        q,
+       ])
+
     });
 
     it('should not parse an RDF* triple with a triple as predicate',
