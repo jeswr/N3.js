@@ -69,6 +69,7 @@
     "spec-trig-eval-rdf-star": "node ../rdf-test-suite.js/bin/Runner.js spec/parser.js https://w3c.github.io/rdf-star/tests/trig/eval/manifest.jsonld -i '{ \"format\": \"trig-star\" }' -c .rdf-test-suite-cache/",
     "spec-turtle-rdf-star": "node ../rdf-test-suite.js/bin/Runner.js spec/parser.js https://w3c.github.io/rdf-star/tests/turtle/syntax/manifest.jsonld -i '{ \"format\": \"turtle-star\" }' -c .rdf-test-suite-cache/",
     "spec-turtle-eval-rdf-star": "node ../rdf-test-suite.js/bin/Runner.js spec/parser.js https://w3c.github.io/rdf-star/tests/turtle/eval/manifest.jsonld -i '{ \"format\": \"turtle-star\" }' -c .rdf-test-suite-cache/",
+    "spec-ntriples-rdf-star": "node ../rdf-test-suite.js/bin/Runner.js spec/parser.js https://w3c.github.io/rdf-star/tests/nt/syntax/manifest.jsonld -i '{ \"format\": \"turtle-star\" }' -c .rdf-test-suite-cache/",
     "spec-clean": "rm -r .rdf-test-suite-cache/",
     "docs": "cd src && docco *.js -o ../docs && cd .."
   },
