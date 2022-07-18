@@ -485,9 +485,13 @@ export default class N3Parser {
     case '<<':
         if (!this._supportsRDFStar)
           return this._error('Unexpected RDF* syntax', token);
-        this._saveContext('<<', this._graph, this._subject, this._predicate, null);
-        this._graph = null;
+        this._saveContext('<<', this._graph, list = this._blankNode(), this.RDF_FIRST, this.RDF_NIL);
+        // this._graph = null;
         return this._readSubject;
+    case '>>':
+        item = this._object;
+        next  = this._getContextEndReader();
+        break;
     default:
       if ((item = this._readEntity(token)) === undefined)
         return;
@@ -891,7 +895,10 @@ export default class N3Parser {
       // TODO: Either continue this custom list case here, or do a bigger refactor where
       // rdfstar triples can only check a restricted syntax
       // return this._error('Reified triples in lists are currently unsupported', token);
-      return this._readListItem;
+      // this._subject = 
+      // this._emit(this._subject, this._predicate, quad, this._graph);
+      this._object = quad;
+      return this._readListItem(token);
     }
 
     // If the triple was the subject, continue by reading the predicate.

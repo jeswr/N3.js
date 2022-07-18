@@ -1087,14 +1087,10 @@ describe('Parser', () => {
 
       // https://github.com/rdfjs/N3.js/issues/272
       it('should parse reified triple in list', () => {
-        expect(new Parser().parse('<a> <b> ( << <c> <d> <e>>> ) .')).to.deep.equal([
+        console.log(JSON.stringify(new Parser().parse('<a> <b> ( << <c> <d> <e>>> ) .'), null, 2))
+        expect(new Parser().parse('<a> <b> ( << <c> <d> <e> >> ) .')).to.deep.equal([
           new Quad(
-            new NamedNode('a'),
-            new NamedNode('b'),
-            new BlankNode('1'),
-          ),
-          new Quad(
-            new BlankNode('1'),
+            new BlankNode('b0'),
             new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#first`),
             new Quad(
               new NamedNode('c'),
@@ -1103,10 +1099,50 @@ describe('Parser', () => {
             ),
           ),
           new Quad(
-            new BlankNode('1'),
+            new BlankNode('b0'),
             new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#rest`),
             new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#nil`)
-          )
+          ),
+          new Quad(
+            new NamedNode('a'),
+            new NamedNode('b'),
+            new BlankNode('b0'),
+          ),
+         ])
+      });
+
+      it('should parse reified triple in list', () => {
+        console.log(JSON.stringify(new Parser().parse('<a> <b> ( << <c> <d> <e>>> ) .'), null, 2))
+        expect(new Parser().parse('<a> <b> ( <z> << <c> <d> <e> >> ) .')).to.deep.equal([
+          new Quad(
+            new BlankNode('b0'),
+            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#first`),
+            new NamedNode('z'),
+          ),
+          new Quad(
+            new BlankNode('b0'),
+            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#rest`),
+            new BlankNode('b1'),
+          ),
+          new Quad(
+            new BlankNode('b1'),
+            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#first`),
+            new Quad(
+              new NamedNode('c'),
+              new NamedNode('d'),
+              new NamedNode('e'),
+            ),
+          ),
+          new Quad(
+            new BlankNode('b1'),
+            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#rest`),
+            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#nil`)
+          ),
+          new Quad(
+            new NamedNode('a'),
+            new NamedNode('b'),
+            new BlankNode('b0'),
+          ),
          ])
       });
 
