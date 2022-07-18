@@ -947,7 +947,7 @@ describe('Parser', () => {
         )
        ]);
 
-       console.log(new Parser().parse('<a> <b> <c> {| <d> <e> |} .').map(x => JSON.stringify(x, null, 2)))
+      //  console.log(new Parser().parse('<a> <b> <c> {| <d> <e> |} .').map(x => JSON.stringify(x, null, 2)))
 
        expect(new Parser().parse('<a> <b> <c> {| <d> <e> |} .')).to.deep.equal([ 
         new Quad(

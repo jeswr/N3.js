@@ -315,11 +315,17 @@ export default class N3Parser {
                         this._subject = this._blankNode());
       return this._readBlankNodeHead;
     case '(':
+      if (this._contextStack[this._contextStack.length - 1]?.type === '<<') {
+        this._error('Unexpected collection list allowed within quoted triple', token);
+      }
       // Start a new list
       this._saveContext('list', this._graph, this._subject, this._predicate, this.RDF_NIL);
       this._subject = null;
       return this._readListItem;
     case '{':
+      if (this._contextStack[this._contextStack.length - 1]?.type === '<<') {
+        this._error('Unexpected formula within quoted triple', token);
+      }
       // Start a new formula
       if (!this._n3Mode)
         return this._error('Unexpected graph', token);
@@ -363,9 +369,11 @@ export default class N3Parser {
       this._subject = null;
       return this._readBlankNodeTail(token);
     }
-    else {
+    else if (this._contextStack[this._contextStack.length - 2]?.type !== '<<') {
       this._predicate = null;
       return this._readPredicate(token);
+    } else {
+      return this._error('Unexpected compound blank node in quoted triple', token)
     }
   }
 
@@ -473,6 +481,13 @@ export default class N3Parser {
       this._saveContext('formula', this._graph, this._subject, this._predicate,
                         this._graph = this._blankNode());
       return this._readSubject;
+    // TODO: add unit tests for this
+    case '<<':
+        if (!this._supportsRDFStar)
+          return this._error('Unexpected RDF* syntax', token);
+        this._saveContext('<<', this._graph, this._subject, this._predicate, null);
+        this._graph = null;
+        return this._readSubject;
     default:
       if ((item = this._readEntity(token)) === undefined)
         return;
@@ -934,7 +949,7 @@ export default class N3Parser {
 
   // ### `_emit` sends a quad through the callback
   _emit(subject, predicate, object, graph) {
-    console.log(1);
+    // console.log(1);
     this._callback(null, this._quad(subject, predicate, object, graph || this.DEFAULTGRAPH));
   }
 
@@ -1062,9 +1077,9 @@ export default class N3Parser {
       let error;
       this._callback = (e, t) => { e ? (error = e) : t && quads.push(t); };
       this._lexer.tokenize(input).every(token => {
-        console.log(token);
+        // console.log(token);
         this._readCallback = this._readCallback(token);
-        console.log(this._readCallback);
+        // console.log(this._readCallback);
         return this._readCallback;
       });
       if (error) throw error;
