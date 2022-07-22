@@ -647,7 +647,14 @@ export default class N3Parser {
       return this._readPredicate;
     default:
       // An entity means this is a quad (only allowed if not already inside a graph)
-      if (this._supportsQuads && this._graph === null && (graph = this._readEntity(token)) !== undefined) {
+      if (
+        this._supportsQuads
+        && this._graph === null
+        && (graph = this._readEntity(token)) !== undefined
+        // Cannot read graphs term inside quoted triples
+        // TODO: See if this is *actually* needed
+        && this._contextStack[this._contextStack.length - 1]?.type !== '<<'
+        ) {
         next = this._readQuadPunctuation;
         break;
       }
@@ -871,8 +878,8 @@ export default class N3Parser {
     console.log('inside startailorgraph', token)
     if (token.type !== '>>') {
       // An entity means this is a quad (only allowed if not already inside a graph)
-      if (this._supportsQuads && this._graph === null && (this._graph = this._readEntity(token)) !== undefined)
-        return this._readRDFStarTail;
+      // if (this._supportsQuads && this._graph === null && (this._graph = this._readEntity(token)) !== undefined)
+      //   return this._readRDFStarTail;
       return this._error(`Expected >> to follow "${this._object.id}"`, token);
     }
     return this._readRDFStarTail(token);
@@ -972,6 +979,8 @@ export default class N3Parser {
     // console.log(1);
     this._callback(null, this._quad(subject, predicate, object, graph || this.DEFAULTGRAPH));
   }
+
+  
 
   // ### `_error` emits an error message through the callback
   _error(message, token) {
