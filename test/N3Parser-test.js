@@ -1,3 +1,4 @@
+import { expect } from 'chai';
 import { Parser, NamedNode, BlankNode, Quad, termFromId, DataFactory } from '../src/';
 
 const BASE_IRI = 'http://example.org/';
@@ -21,6 +22,38 @@ describe('Parser', () => {
     });
   });
 
+
+  it('should parse a basic list',
+  shouldParse('<a> <b> ( <c> ).',
+              ['a', 'b', '_:b0'],
+              ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first', 'c'],
+              ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil']));
+
+              it('should parse a nested list',
+              shouldParse('<a> <b> ( ( <c> ) ).',
+                          ['a', 'b', '_:b0'],
+                          ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first', '_:b1'],
+                          ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil'],
+                          ['_:b1', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first', 'c'],
+                          ['_:b1', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil']
+                          ));
+            
+
+
+  // it('Should correctly handle a nested list', () => {
+  //   expect(new Parser().parse('<a> <b> ( 1 )')).to.equal([
+  //     new Quad(
+  //       new NamedNode('a'),
+  //       new NamedNode('b'),
+  //       new BlankNode('b0')
+  //     ),
+  //     new Quad(
+  //       new BlankNode('b0'),
+  //       new NamedNode()
+  //     )
+  //   ])
+  // })
+
   // describe('A Parser instance', () => {
   //   it('should parse the empty string',
   //     shouldParse(''
@@ -31,8 +64,8 @@ describe('Parser', () => {
   //                 /* no triples */));
 
   //   it('should parse a single triple',
-  //     shouldParse('<a> <b> <c>.',
-  //                 ['a', 'b', 'c']));
+      // shouldParse('<a> <b> <c>.',
+      //             ['a', 'b', 'c']));
 
   //   it('should parse three triples',
   //     shouldParse('<a> <b> <c>.\n<d> <e> <f>.\n<g> <h> <i>.',
@@ -468,13 +501,13 @@ describe('Parser', () => {
   //     shouldNotParse('<a> <b> (a:x a:y).',
   //                    'Undefined prefix "a:" on line 1.'));
 
-  //   it('should parse statements with blank nodes in lists',
-  //     shouldParse('<a> <b> (_:x _:y).',
-  //                 ['a', 'b', '_:b0'],
-  //                 ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first', '_:b0_x'],
-  //                 ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest',  '_:b1'],
-  //                 ['_:b1', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first', '_:b0_y'],
-  //                 ['_:b1', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil']));
+    // it('should parse statements with blank nodes in lists',
+    //   shouldParse('<a> <b> (_:x _:y).',
+    //               ['a', 'b', '_:b0'],
+    //               ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first', '_:b0_x'],
+    //               ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest',  '_:b1'],
+    //               ['_:b1', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first', '_:b0_y'],
+    //               ['_:b1', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil']));
 
   //   it('should parse statements with a nested empty list',
   //     shouldParse('<a> <b> (<x> ()).',
@@ -1091,7 +1124,7 @@ describe('Parser', () => {
         expect(new Parser().parse('<a> <b> ( << <c> <d> <e> >> ) .')).to.deep.equal([
           new Quad(
             new BlankNode('b0'),
-            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#first`),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#first'),
             new Quad(
               new NamedNode('c'),
               new NamedNode('d'),
@@ -1100,8 +1133,8 @@ describe('Parser', () => {
           ),
           new Quad(
             new BlankNode('b0'),
-            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#rest`),
-            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#nil`)
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#rest'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#nil')
           ),
           new Quad(
             new NamedNode('a'),
@@ -1111,22 +1144,12 @@ describe('Parser', () => {
          ])
       });
 
-      it('should parse reified triple in list', () => {
+      it('should parse reified triple in nested list', () => {
         console.log(JSON.stringify(new Parser().parse('<a> <b> ( << <c> <d> <e>>> ) .'), null, 2))
-        expect(new Parser().parse('<a> <b> ( <z> << <c> <d> <e> >> ) .')).to.deep.equal([
-          new Quad(
-            new BlankNode('b0'),
-            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#first`),
-            new NamedNode('z'),
-          ),
-          new Quad(
-            new BlankNode('b0'),
-            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#rest`),
-            new BlankNode('b1'),
-          ),
+        expect(new Parser().parse('<a> <b> ( ( << <c> <d> <e> >> ) ) .')).to.deep.equal([
           new Quad(
             new BlankNode('b1'),
-            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#first`),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#first'),
             new Quad(
               new NamedNode('c'),
               new NamedNode('d'),
@@ -1135,8 +1158,18 @@ describe('Parser', () => {
           ),
           new Quad(
             new BlankNode('b1'),
-            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#rest`),
-            new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#nil`)
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#rest'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#nil')
+          ),
+          new Quad(
+            new NamedNode('b0'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#first'),
+            new BlankNode('b1'),
+          ),
+          new Quad(
+            new BlankNode('b0'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#rest'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#nil')
           ),
           new Quad(
             new NamedNode('a'),
@@ -1144,6 +1177,60 @@ describe('Parser', () => {
             new BlankNode('b0'),
           ),
          ])
+      });
+
+      // it('should parse reified triple in list', () => {
+      //   console.log(JSON.stringify(new Parser().parse('<a> <b> ( << <c> <d> <e>>> ) .'), null, 2))
+      //   expect(new Parser().parse('<a> <b> ( <z> << <c> <d> <e> >> ) .')).to.deep.equal([
+      //     new Quad(
+      //       new BlankNode('b0'),
+      //       new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#first`),
+      //       new NamedNode('z'),
+      //     ),
+      //     new Quad(
+      //       new BlankNode('b0'),
+      //       new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#rest`),
+      //       new BlankNode('b1'),
+      //     ),
+      //     new Quad(
+      //       new BlankNode('b1'),
+      //       new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#first`),
+      //       new Quad(
+      //         new NamedNode('c'),
+      //         new NamedNode('d'),
+      //         new NamedNode('e'),
+      //       ),
+      //     ),
+      //     new Quad(
+      //       new BlankNode('b1'),
+      //       new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#rest`),
+      //       new NamedNode(`http://www.w3.org/1999/02/22-rdf-syntax-ns#nil`)
+      //     ),
+      //     new Quad(
+      //       new NamedNode('a'),
+      //       new NamedNode('b'),
+      //       new BlankNode('b0'),
+      //     ),
+      //    ])
+      // });
+
+      // TODO: Improve errors to be easier to interpret
+      it('Should error on fourth term in quoted triple', () => {
+        expect(function () { new Parser().parse('<< <a> <b> <c> <g> >> <p> <q>') }).to.throw('Expected >> to follow "c" on line 1.');
+      });
+
+      it('Should error on fourth term in quoted triple object', () => {
+        expect(function () { new Parser().parse('<p> <q> << <a> <b> <c> <g> >>') }).to.throw('Expected >> to follow "c" on line 1.');
+      });
+
+      // TODO: Fix naming here
+      // TODO: See if there is any point in introducing a lenient mode that allows these kinds of things
+      it('Should error on quoted triple as predicate', () => {
+        expect(function () { new Parser().parse('<p> << <a> <b> <c> >> <q>') }).to.throw('Expected entity but got << on line 1.');
+      });
+
+      it('Should error on quoted triple as predicate', () => {
+        expect(function () { new Parser().parse('<p> << <a> <b> <c> <g> >> <q>') }).to.throw('Expected entity but got << on line 1.');
       });
 
       // TODO: Finish this test

@@ -485,7 +485,7 @@ export default class N3Parser {
     case '<<':
         if (!this._supportsRDFStar)
           return this._error('Unexpected RDF* syntax', token);
-        this._saveContext('<<', this._graph, list = this._blankNode(), this.RDF_FIRST, this.RDF_NIL);
+        this._saveContext('<<', this._graph, parent._subject, this.RDF_FIRST, this.RDF_NIL);
         // this._graph = null;
         return this._readSubject;
     case '>>':
@@ -904,7 +904,7 @@ export default class N3Parser {
       // return this._error('Reified triples in lists are currently unsupported', token);
       // this._subject = 
       // this._emit(this._subject, this._predicate, quad, this._graph);
-      this._object = quad;
+      this._subject = quad;
       return this._readListItem(token);
     }
 
