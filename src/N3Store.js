@@ -223,6 +223,7 @@ export default class N3Store {
     let graphItem = this._graphs[graph];
     // Create the graph if it doesn't exist yet
     if (!graphItem) {
+      // TODO: Do deep nesting here
       graphItem = this._graphs[graph] = { subjects: {}, predicates: {}, objects: {} };
       // Freezing a graph helps subsequent `add` performance,
       // and properties will never be modified anyway

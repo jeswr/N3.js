@@ -189,6 +189,7 @@ export default class N3Parser {
 
   // ### `_readSubject` reads a quad's subject
   _readSubject(token) {
+    console.log('readSubject called with', token)
     this._predicate = null;
     switch (token.type) {
     case '[':
@@ -483,15 +484,29 @@ export default class N3Parser {
       return this._readSubject;
     // TODO: add unit tests for this
     case '<<':
-        if (!this._supportsRDFStar)
-          return this._error('Unexpected RDF* syntax', token);
-        this._saveContext('<<', this._graph, parent._subject, this.RDF_FIRST, this.RDF_NIL);
-        // this._graph = null;
-        return this._readSubject;
-    case '>>':
-        item = this._object;
-        next  = this._getContextEndReader();
-        break;
+      if (!this._supportsRDFStar)
+        return this._error('Unexpected RDF* syntax', token);
+      
+      // TODO: Properly reason through what is happening here as this is all just guess
+      // work at this point
+      this._saveContext('<<', this._graph, this._subject, this._predicate, null);
+      this._graph = null;
+      next = this._readSubject;
+      // this._saveContext('<<', this._graph, null, null, null);
+      // this._graph = null;
+      // return this._readSubject;
+    // case '<<':
+    //     if (!this._supportsRDFStar)
+    //       return this._error('Unexpected RDF* syntax', token);
+    //     console.log('------------------------------------------------------------------------------------------------ inside << part of readListItem')
+    //     // this._saveContext('<<', this._graph, parent._subject, this.RDF_FIRST, this._subject = list = this._blankNode());
+    //     // this._graph = null;
+    //     // return this._readSubject;
+
+    // case '>>':
+    //     item = this._object;
+    //     next  = this._getContextEndReader();
+    //     break;
     default:
       if ((item = this._readEntity(token)) === undefined)
         return;
