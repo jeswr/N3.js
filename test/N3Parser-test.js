@@ -1118,6 +1118,8 @@ describe('Parser', () => {
   //      ])
   //     })
 
+
+    // TODO: Add test to forbid <<() <a> <b>>
       // https://github.com/rdfjs/N3.js/issues/272
       it('should parse reified triple in list', () => {
         const parsed = new Parser().parse('<a> <b> ( << <c> <d> <e>>> ) .');
@@ -1146,6 +1148,70 @@ describe('Parser', () => {
           ),
          ])
       });
+
+      it('should parse reified triple in list with list as subject of a triple', () => {
+        const parsed = new Parser().parse('( << <c> <d> <e> >> ) <a> <b> .');
+        console.log('---------------------------------------------------------------------------');
+        console.log(parsed, null, 2);
+        console.log('---------------------------------------------------------------------------');
+        expect(parsed).to.deep.equal([
+          new Quad(
+            new BlankNode('b0'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#first'),
+            new Quad(
+              new NamedNode('c'),
+              new NamedNode('d'),
+              new NamedNode('e'),
+            ),
+          ),
+          new Quad(
+            new BlankNode('b0'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#rest'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#nil')
+          ),
+          new Quad(
+            new BlankNode('b0'),
+            new NamedNode('b'),
+            new NamedNode('a'),
+          ),
+         ])
+      });
+
+      it('should parse reified triple in list with list as subject of a triple', () => {
+        const parsed = new Parser().parse('( << << <n> <m> <o> >> <d> <e> >> ) <a> <b> .');
+        console.log('---------------------------------------------------------------------------');
+        console.log(parsed, null, 2);
+        console.log('---------------------------------------------------------------------------');
+        expect(parsed).to.deep.equal([
+          new Quad(
+            new BlankNode('b0'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#first'),
+            new Quad(
+              new NamedNode('c'),
+              new NamedNode('d'),
+              new NamedNode('e'),
+            ),
+          ),
+          new Quad(
+            new BlankNode('b0'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#rest'),
+            new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#nil')
+          ),
+          new Quad(
+            new BlankNode('b0'),
+            new NamedNode('b'),
+            new NamedNode('a'),
+          ),
+         ])
+      });
+
+      // TODO: Add test for floating quoted triple like:
+    //   PREFIX : <http://example/>
+
+    // :G {
+    //   :s :p :o .
+    //   <<:s :p :o>> .
+    // }
 
       // it('should parse reified triple in nested list', () => {
       //   console.log(JSON.stringify(new Parser().parse('<a> <b> ( << <c> <d> <e>>> ) .'), null, 2))

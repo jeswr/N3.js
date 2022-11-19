@@ -97,8 +97,10 @@ export default class N3Parser {
   _restoreContext(type, token) {
     // Obtain the previous context
     const context = this._contextStack.pop();
-    if (!context || context.type !== type)
-      return this._error(`Unexpected ${token.type}`, token);
+    if (!context || context.type !== type) {
+      // throw new Error(`${type} ${JSON.stringify(context, null, 2)} | ${this._contextStack} ${this._contextStack?.length}`)
+      return this._error(`${type} ${JSON.stringify(context, null, 2)} | ${this._contextStack} ${this._contextStack?.length}`, token);
+    }
 
     // Restore the quad of the previous context
     this._subject   = context.subject;
@@ -492,6 +494,8 @@ export default class N3Parser {
       this._saveContext('<<', this._graph, this._subject, this._predicate, null);
       this._graph = null;
       next = this._readSubject;
+      break;
+      // throw new Error('boo')
       // this._saveContext('<<', this._graph, null, null, null);
       // this._graph = null;
       // return this._readSubject;
@@ -503,7 +507,16 @@ export default class N3Parser {
     //     // this._graph = null;
     //     // return this._readSubject;
 
-    // case '>>':
+    case '>>':
+      if (!this._supportsRDFStar)
+        return this._error('Unexpected RDF* syntax', token);
+      
+      console.log('before restore-')
+      this._restoreContext('>>', token);
+      console.log('after restore-')
+      item = this._object;
+      break;
+      // break;
     //     item = this._object;
     //     next  = this._getContextEndReader();
     //     break;
@@ -784,7 +797,7 @@ export default class N3Parser {
       if ((entity = this._readEntity(token, true)) !== undefined)
         break;
     default:
-      return this._error(`Unexpected ${token.type}`, token);
+      return this._error(`Unexpected - ${token.type}`, token);
     }
     // Without explicit quantifiers, map entities to a quantified entity
     if (!this._explicitQuantifiers)
