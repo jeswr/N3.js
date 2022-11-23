@@ -497,17 +497,8 @@ export default class N3Parser {
       this._saveContext('<<', this._graph, this._subject, null, null);
       return this._readSubject;
     case '>>':
-      item = this._graph //this._quad(this._subject, this._predicate, this._object, this._graph || this.DEFAULTGRAPH);
+      item = this._graph
       this._graph = null
-      // this._restoreContext('<<', token);
-
-      // // Set these correctly after restoring the context
-      // previousList = this._subject,   // The previous list that contains this list
-      // stack = this._contextStack,       // The stack of parent contexts
-      // parent = stack[stack.length - 1]; // The parent containing the current list
-
-      
-
       break;
     default:
       if ((item = this._readEntity(token)) === undefined)
