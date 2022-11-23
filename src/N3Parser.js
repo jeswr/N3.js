@@ -72,6 +72,10 @@ export default class N3Parser {
   // ### `_saveContext` stores the current parsing context
   // when entering a new scope (list, blank node, formula)
   _saveContext(type, graph, subject, predicate, object) {
+    // Lists are not allowed inside quoted triples
+    if (this._contextStack.length > 0 && this._contextStack[this._contextStack.length - 1].token === '<<') {
+      return this._error(`Unexpected list inside quoted triple`, token);
+    }
     const n3Mode = this._n3Mode;
     this._contextStack.push({
       type,
@@ -97,9 +101,11 @@ export default class N3Parser {
   _restoreContext(type, token) {
     // Obtain the previous context
     const context = this._contextStack.pop();
+    console.log('restore context', context, type, token, context.type !== type)
     if (!context || context.type !== type) {
+      console.log('returning error')
       // throw new Error(`${type} ${JSON.stringify(context, null, 2)} | ${this._contextStack} ${this._contextStack?.length}`)
-      return this._error(`${type} ${JSON.stringify(context, null, 2)} | ${this._contextStack} ${this._contextStack?.length}`, token);
+      return this._error(`${type} ${JSON.stringify(context, null, 2)} | ${JSON.stringify(this._contextStack, null, 2)} ${this._contextStack?.length}`, token);
     }
 
     // Restore the quad of the previous context
@@ -318,9 +324,9 @@ export default class N3Parser {
                         this._subject = this._blankNode());
       return this._readBlankNodeHead;
     case '(':
-      if (this._contextStack[this._contextStack.length - 1]?.type === '<<') {
-        this._error('Unexpected collection list allowed within quoted triple', token);
-      }
+      // if (this._contextStack[this._contextStack.length - 1]?.type === '<<') {
+      //   this._error('Unexpected collection list allowed within quoted triple', token);
+      // }
       // Start a new list
       this._saveContext('list', this._graph, this._subject, this._predicate, this.RDF_NIL);
       this._subject = null;
@@ -421,10 +427,12 @@ export default class N3Parser {
   _readListItem(token) {
     let item = null,                      // The item of the list
         list = null,                      // The list itself
-        next = this._readListItem;        // The next function to execute
-    const previousList = this._subject,   // The previous list that contains this list
+        next = this._readListItem,        // The next function to execute
+        previousList = this._subject,   // The previous list that contains this list
         stack = this._contextStack,       // The stack of parent contexts
         parent = stack[stack.length - 1]; // The parent containing the current list
+
+    console.log('state when list item is called', token, this._subject, this._predicate, this._object, this._n3Mode)
 
     switch (token.type) {
     case '[':
@@ -491,9 +499,15 @@ export default class N3Parser {
       
       // TODO: Properly reason through what is happening here as this is all just guess
       // work at this point
-      this._saveContext('<<', this._graph, this._subject, this._predicate, null);
-      this._graph = null;
-      next = this._readSubject;
+      // this._saveContext('<<', this._graph, this._subject, this._predicate, null);
+      // this._saveContext('<<', this._graph, this._subject = item = this._blankNode(), this.RDF_FIRST, null);
+      console.log('='.repeat(100), this._subject, this._predicate, this._object, this._graph, list, previousList)
+      this._saveContext('<<', this._graph, null, this.RDF_FIRST, null);
+      // this._subject = null;
+      // this._predicate = null;
+      // this._object = null;
+      // this._graph = null;
+      return this._readSubject;
       break;
       // throw new Error('boo')
       // this._saveContext('<<', this._graph, null, null, null);
@@ -510,11 +524,33 @@ export default class N3Parser {
     case '>>':
       if (!this._supportsRDFStar)
         return this._error('Unexpected RDF* syntax', token);
+
+      // throw new Error('boo1')
       
       console.log('before restore-')
-      this._restoreContext('>>', token);
+      item = this._quad(this._subject, this._predicate, this._object, this._graph || this.DEFAULTGRAPH);
+  
+      console.log('-'.repeat(100),'pre restored', this._subject, this._predicate, this._object, this._graph)
+      this._restoreContext('<<', token);
+
+      // Set these correctly after restoring the context
+      previousList = this._subject,   // The previous list that contains this list
+      stack = this._contextStack,       // The stack of parent contexts
+      parent = stack[stack.length - 1]; // The parent containing the current list
+
+
+      console.log('-'.repeat(100),'restored', this._subject, this._predicate, this._object, this._graph)
+      // next = this._getContextEndReader;
+      // previousList = this._blankNode()
+      // list = this._object;
+      // this._subject = null;
+      console.log(this._contextStack)
       console.log('after restore-')
-      item = this._object;
+      // throw new Error('boo')
+      // return this._readListItem
+      // next = this._getContextEndReader();
+      // throw new Error('boo')
+      // item = this._object;
       break;
       // break;
     //     item = this._object;
@@ -921,20 +957,28 @@ export default class N3Parser {
     const quad = this._quad(this._subject, this._predicate, this._object,
       this._graph || this.DEFAULTGRAPH);
     
-    console.log('before context restoration', this._subject, this._predicate, this._object, this._graph);
-    this._restoreContext('<<', token);
-    console.log('after context restoration', this._subject, this._predicate, this._object, this._graph);
-    console.log(this._contextStack)
 
-    if (this._contextStack[this._contextStack.length - 1]?.type === 'list') {
+    if (this._contextStack[this._contextStack.length - 2]?.type === 'list') {
       // TODO: Either continue this custom list case here, or do a bigger refactor where
       // rdfstar triples can only check a restricted syntax
       // return this._error('Reified triples in lists are currently unsupported', token);
       // this._subject = 
       // this._emit(this._subject, this._predicate, quad, this._graph);
-      this._subject = quad;
+      // console.log('state', this._subject, this._predicate, this._object, quad)
+      
+      // this._subject = this._contextStack[this._contextStack.length - 1].object ?? this._contextStack[this._contextStack.length - 1].subject;
+      // this._emit(this._subject, this.RDF_FIRST, quad);
+
+      console.log('--'.repeat(100))
+      
       return this._readListItem(token);
     }
+
+    console.log('before context restoration', this._subject, this._predicate, this._object, this._graph);
+    this._restoreContext('<<', token);
+    console.log('after context restoration', this._subject, this._predicate, this._object, this._graph);
+    console.log(this._contextStack)
+
 
     // If the triple was the subject, continue by reading the predicate.
     if (this._subject === null) {
@@ -1004,7 +1048,9 @@ export default class N3Parser {
 
   // ### `_emit` sends a quad through the callback
   _emit(subject, predicate, object, graph) {
-    // console.log(1);
+    if (subject.value === 'c') {
+      throw new Error('boo')
+    }
     this._callback(null, this._quad(subject, predicate, object, graph || this.DEFAULTGRAPH));
   }
 
