@@ -101,11 +101,8 @@ export default class N3Parser {
   _restoreContext(type, token) {
     // Obtain the previous context
     const context = this._contextStack.pop();
-    console.log('restore context', context, type, token, context.type !== type)
     if (!context || context.type !== type) {
-      console.log('returning error')
-      // throw new Error(`${type} ${JSON.stringify(context, null, 2)} | ${this._contextStack} ${this._contextStack?.length}`)
-      return this._error(`${type} ${JSON.stringify(context, null, 2)} | ${JSON.stringify(this._contextStack, null, 2)} ${this._contextStack?.length}`, token);
+      return this._error(`Expected ${context.type} but got ${type}`, token);
     }
 
     // Restore the quad of the previous context
@@ -496,66 +493,22 @@ export default class N3Parser {
     case '<<':
       if (!this._supportsRDFStar)
         return this._error('Unexpected RDF* syntax', token);
-      
-      // TODO: Properly reason through what is happening here as this is all just guess
-      // work at this point
-      // this._saveContext('<<', this._graph, this._subject, this._predicate, null);
-      // this._saveContext('<<', this._graph, this._subject = item = this._blankNode(), this.RDF_FIRST, null);
-      console.log('='.repeat(100), this._subject, this._predicate, this._object, this._graph, list, previousList)
-      this._saveContext('<<', this._graph, null, this.RDF_FIRST, null);
-      // this._subject = null;
-      // this._predicate = null;
-      // this._object = null;
-      // this._graph = null;
+
+      this._saveContext('<<', this._graph, this._subject, null, null);
       return this._readSubject;
-      break;
-      // throw new Error('boo')
-      // this._saveContext('<<', this._graph, null, null, null);
-      // this._graph = null;
-      // return this._readSubject;
-    // case '<<':
-    //     if (!this._supportsRDFStar)
-    //       return this._error('Unexpected RDF* syntax', token);
-    //     console.log('------------------------------------------------------------------------------------------------ inside << part of readListItem')
-    //     // this._saveContext('<<', this._graph, parent._subject, this.RDF_FIRST, this._subject = list = this._blankNode());
-    //     // this._graph = null;
-    //     // return this._readSubject;
-
     case '>>':
-      if (!this._supportsRDFStar)
-        return this._error('Unexpected RDF* syntax', token);
+      item = this._graph //this._quad(this._subject, this._predicate, this._object, this._graph || this.DEFAULTGRAPH);
+      this._graph = null
+      // this._restoreContext('<<', token);
 
-      // throw new Error('boo1')
+      // // Set these correctly after restoring the context
+      // previousList = this._subject,   // The previous list that contains this list
+      // stack = this._contextStack,       // The stack of parent contexts
+      // parent = stack[stack.length - 1]; // The parent containing the current list
+
       
-      console.log('before restore-')
-      item = this._quad(this._subject, this._predicate, this._object, this._graph || this.DEFAULTGRAPH);
-  
-      console.log('-'.repeat(100),'pre restored', this._subject, this._predicate, this._object, this._graph)
-      this._restoreContext('<<', token);
 
-      // Set these correctly after restoring the context
-      previousList = this._subject,   // The previous list that contains this list
-      stack = this._contextStack,       // The stack of parent contexts
-      parent = stack[stack.length - 1]; // The parent containing the current list
-
-
-      console.log('-'.repeat(100),'restored', this._subject, this._predicate, this._object, this._graph)
-      // next = this._getContextEndReader;
-      // previousList = this._blankNode()
-      // list = this._object;
-      // this._subject = null;
-      console.log(this._contextStack)
-      console.log('after restore-')
-      // throw new Error('boo')
-      // return this._readListItem
-      // next = this._getContextEndReader();
-      // throw new Error('boo')
-      // item = this._object;
       break;
-      // break;
-    //     item = this._object;
-    //     next  = this._getContextEndReader();
-    //     break;
     default:
       if ((item = this._readEntity(token)) === undefined)
         return;
@@ -956,29 +909,13 @@ export default class N3Parser {
     // Read the quad and restore the previous context
     const quad = this._quad(this._subject, this._predicate, this._object,
       this._graph || this.DEFAULTGRAPH);
-    
 
-    if (this._contextStack[this._contextStack.length - 2]?.type === 'list') {
-      // TODO: Either continue this custom list case here, or do a bigger refactor where
-      // rdfstar triples can only check a restricted syntax
-      // return this._error('Reified triples in lists are currently unsupported', token);
-      // this._subject = 
-      // this._emit(this._subject, this._predicate, quad, this._graph);
-      // console.log('state', this._subject, this._predicate, this._object, quad)
-      
-      // this._subject = this._contextStack[this._contextStack.length - 1].object ?? this._contextStack[this._contextStack.length - 1].subject;
-      // this._emit(this._subject, this.RDF_FIRST, quad);
+    this._restoreContext('<<', token);
 
-      console.log('--'.repeat(100))
-      
+    if (this._contextStack[this._contextStack.length - 1]?.type === 'list') {
+      this._graph = quad;
       return this._readListItem(token);
     }
-
-    console.log('before context restoration', this._subject, this._predicate, this._object, this._graph);
-    this._restoreContext('<<', token);
-    console.log('after context restoration', this._subject, this._predicate, this._object, this._graph);
-    console.log(this._contextStack)
-
 
     // If the triple was the subject, continue by reading the predicate.
     if (this._subject === null) {
@@ -992,7 +929,6 @@ export default class N3Parser {
     }
   }
 
-
   // ### `_readRDFStarTail` reads the end of a nested RDF* triple
   _readExplicitRDFStarTail(token) {
       // return this._error(`Expected |} but got ${token.type}`, token);
@@ -1003,27 +939,7 @@ export default class N3Parser {
       return this._readPredicate;
     this._restoreContext('{|', token);
     return this._getContextEndReader();
-
-
-
-      // Read the quad and restore the previous context
-    const quad = this._quad(this._subject, this._predicate, this._object,
-      this._graph || this.DEFAULTGRAPH);
-
-
-    // this._restoreContext('<<', token);
-    // // If the triple was the subject, continue by reading the predicate.
-    // if (this._subject === null) {
-    //   this._subject = quad;
-    //   return this._readPredicate;
-    // }
-    // // If the triple was the object, read context end.
-    // else {
-    //   this._object = quad;
-    //   return this._getContextEndReader();
-    // }
   }
-
 
   // ### `_getContextEndReader` gets the next reader function at the end of a context
   _getContextEndReader() {
@@ -1048,13 +964,8 @@ export default class N3Parser {
 
   // ### `_emit` sends a quad through the callback
   _emit(subject, predicate, object, graph) {
-    if (subject.value === 'c') {
-      throw new Error('boo')
-    }
     this._callback(null, this._quad(subject, predicate, object, graph || this.DEFAULTGRAPH));
   }
-
-  
 
   // ### `_error` emits an error message through the callback
   _error(message, token) {
