@@ -228,6 +228,10 @@ describe('Term', () => {
       termToId(new Literal('"abc"').toJSON()).should.equal('"abc"');
     });
 
+    it('should create an id that starts with a quotation mark from a Literal', () => {
+      termFromId(termToId(new Literal('abc'))).termType.should.equal('Literal');
+    });
+
     it('should create an id that starts with a quotation mark from a Literal string', () => {
       termToId('"abc"').should.equal('"abc"');
     });
