@@ -1,4 +1,5 @@
 import { termToId } from './N3DataFactory';
+import {} from '@rdfjs/types';
 
 // Caveats of multiple sources
 // - Need to do a `.has()` check first in order to ensure that the 'new'
@@ -46,10 +47,20 @@ export default class N3Reasoner {
   // e.g., if a rule only has one variable, then we can just give it a pointer
   // to the index that it should do lookups from.
   // Similarly with insertions.
+
+  // _evaluatePremise(rule, content, cb, i = 0) {
+  //   const indexes = [content[rule.premise[i].content]]
+  //   for (let j = 0; j < 3; j++) {
+
+  //   }
+  // }
+
+
   _evaluatePremise(rule, content, cb, i = 0) {
     let v1, v2, value, index1, index2;
     const [val0, val1, val2] = rule.premise[i].value, index = content[rule.premise[i].content];
     const v0 = !(value = val0.value);
+    // TODO: see why we are checking if we are in a boolean!?!?
     for (value in v0 ? index : { [value]: index[value] }) {
       if (index1 = index[value]) {
         if (v0) val0.value = Number(value);

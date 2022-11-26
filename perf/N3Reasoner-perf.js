@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-const N3 = require('..');
-const path = require('path');
-const { load, SUBCLASS_RULE, RDFS_RULE, generateDeepTaxonomy } = require('../test/util');
+const { Reasoner } = require('..');
+const { SUBCLASS_RULE, RDFS_RULE } = require('../test/util');
+const { getTimblAndFoaf, generateDeepTaxonomy } = require('deep-taxonomy-benchmark');
 
 async function deepTaxonomy(extended = false) {
   for (let i = 1; i <= 6; i++) {
@@ -9,23 +9,18 @@ async function deepTaxonomy(extended = false) {
     const store = generateDeepTaxonomy(10 ** i, extended);
 
     console.time(`Reasoning: ${TITLE}`);
-    new N3.Reasoner(store).reason(SUBCLASS_RULE);
+    new Reasoner(store).reason(SUBCLASS_RULE);
     console.timeEnd(`Reasoning: ${TITLE}`);
   }
 }
 
 async function run() {
-  const store = new N3.Store();
-  console.time('loading foaf ontology');
-  await load(path.join(__dirname, './data/foaf.ttl'), store);
-  console.timeEnd('loading foaf ontology');
-
-  console.time('loading tim berners lee profile card');
-  await load(path.join(__dirname, './data/timbl.ttl'), store);
-  console.timeEnd('loading tim berners lee profile card');
+  console.time('Loading timbl and foaf');
+  const store = await getTimblAndFoaf();
+  console.timeEnd('Loading timbl and foaf');
 
   console.time('Reasoning');
-  new N3.Reasoner(store).reason(RDFS_RULE);
+  new Reasoner(store).reason(RDFS_RULE);
   console.timeEnd('Reasoning');
 }
 

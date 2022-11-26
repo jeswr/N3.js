@@ -38,6 +38,7 @@
     "chai": "^4.0.2",
     "chai-things": "^0.2.0",
     "colors": "^1.1.2",
+    "deep-taxonomy-benchmark": "^1.1.1",
     "docco": "^0.8.0",
     "eslint": "^5.14.1",
     "mocha": "^8.0.0",
@@ -45,10 +46,12 @@
     "pre-commit": "^1.2.2",
     "rdf-test-suite": "^1.2.0",
     "streamify-string": "^1.0.1",
+    "typescript": "^4.9.3",
     "uglify-js": "^3.14.3"
   },
   "scripts": {
-    "build": "npm run build:node && npm run build:browser",
+    "build": "npm run build:tsc && npm run build:node && npm run build:browser",
+    "build:tsc": "tsc",
     "build:node": "babel src -d lib",
     "build:browser": "rm -rf browser && mkdir browser && browserify -s N3 lib/index.js | uglifyjs > browser/n3.min.js",
     "test": "nyc npm run mocha",

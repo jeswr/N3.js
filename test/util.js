@@ -1,6 +1,4 @@
-const N3 = require('..');
-const fs = require('fs');
-const { Quad, NamedNode, Variable, Parser } = N3;
+const { Quad, NamedNode, Variable } = require('..');
 
 const SUBCLASS_RULE = [{
   premise: [new Quad(
@@ -218,76 +216,7 @@ const RDFS_RULE = [{
 },
 ];
 
-function load(filename, store) {
-  return new Promise(res => {
-    new Parser({ baseIRI: 'http://example.org' }).parse(fs.createReadStream(filename), (error, quad) => {
-      if (quad)
-        store.add(quad);
-      else {
-        res();
-      }
-    });
-  });
-}
-
-function generateDeepTaxonomy(size, extended = false) {
-  const store = new N3.Store();
-
-  if (extended) {
-    for (let i = 0; i < size; i++) {
-      store.addQuads([
-        new Quad(
-          new NamedNode(`http://eulersharp.sourceforge.net/2009/12dtb/test#ind${i}`),
-          new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
-          new NamedNode('http://eulersharp.sourceforge.net/2009/12dtb/test#N0'),
-        ),
-      ]);
-    }
-  }
-  else {
-    store.addQuads([
-      new Quad(
-        new NamedNode('http://eulersharp.sourceforge.net/2009/12dtb/test#ind'),
-        new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
-        new NamedNode('http://eulersharp.sourceforge.net/2009/12dtb/test#N0'),
-      ),
-    ]);
-  }
-
-  store.addQuads([
-    new Quad(
-      new NamedNode(`http://eulersharp.sourceforge.net/2009/12dtb/test#N${size}`),
-      new NamedNode('http://www.w3.org/2000/01/rdf-schema#subClassOf'),
-      new NamedNode('http://eulersharp.sourceforge.net/2009/12dtb/test#A2'),
-    ),
-  ]);
-
-  for (let i = 0; i < size; i++) {
-    store.addQuads([
-      new Quad(
-        new NamedNode(`http://eulersharp.sourceforge.net/2009/12dtb/test#N${i}`),
-        new NamedNode('http://www.w3.org/2000/01/rdf-schema#subClassOf'),
-        new NamedNode(`http://eulersharp.sourceforge.net/2009/12dtb/test#N${i + 1}`),
-      ),
-      new Quad(
-        new NamedNode(`http://eulersharp.sourceforge.net/2009/12dtb/test#N${i}`),
-        new NamedNode('http://www.w3.org/2000/01/rdf-schema#subClassOf'),
-        new NamedNode(`http://eulersharp.sourceforge.net/2009/12dtb/test#I${i + 1}`),
-      ),
-      new Quad(
-        new NamedNode(`http://eulersharp.sourceforge.net/2009/12dtb/test#N${i}`),
-        new NamedNode('http://www.w3.org/2000/01/rdf-schema#subClassOf'),
-        new NamedNode(`http://eulersharp.sourceforge.net/2009/12dtb/test#J${i + 1}`),
-      ),
-    ]);
-  }
-
-  return store;
-}
-
 module.exports = {
   RDFS_RULE,
   SUBCLASS_RULE,
-  load,
-  generateDeepTaxonomy,
 };

@@ -1,7 +1,8 @@
-const N3 = require('../src/');
+const { Quad, NamedNode, Variable, Store, Reasoner } = require('../src/');
 const path = require('path');
-const { load, SUBCLASS_RULE, RDFS_RULE, generateDeepTaxonomy } = require('../test/util');
-const { Quad, NamedNode, Variable, Store } = N3;
+const { load, SUBCLASS_RULE, RDFS_RULE } = require('../test/util');
+
+const { generateDeepTaxonomy, getTimblAndFoaf } = require('deep-taxonomy-benchmark');
 
 describe('Reasoner', () => {
   describe('Testing Reasoning', () => {
@@ -23,7 +24,7 @@ describe('Reasoner', () => {
 
     it('Should apply rules', () => {
       expect(store.size).equal(2);
-      new N3.Reasoner(store).reason([{
+      new Reasoner(store).reason([{
         premise: [new Quad(
           new Variable('?s'),
           new NamedNode('a'),
@@ -53,7 +54,7 @@ describe('Reasoner', () => {
 
     it('Should apply rules containing variables only (flip subject and predicate)', () => {
       expect(store.size).equal(2);
-      new N3.Reasoner(store).reason([{
+      new Reasoner(store).reason([{
         premise: [new Quad(
           new Variable('?s'),
           new Variable('?a'),
@@ -72,7 +73,7 @@ describe('Reasoner', () => {
 
     it('Same subject and flipping predicate and object', () => {
       expect(store.size).equal(2);
-      new N3.Reasoner(store).reason([{
+      new Reasoner(store).reason([{
         premise: [new Quad(
           new NamedNode('http://example.org/s'),
           new Variable('?a'),
@@ -91,7 +92,7 @@ describe('Reasoner', () => {
 
     it('Same object and flipping predicate and subject', () => {
       expect(store.size).equal(2);
-      new N3.Reasoner(store).reason([{
+      new Reasoner(store).reason([{
         premise: [new Quad(
           new Variable('?s'),
           new Variable('?a'),
@@ -110,7 +111,7 @@ describe('Reasoner', () => {
 
     it('Rule with no variables', () => {
       expect(store.size).equal(2);
-      new N3.Reasoner(store).reason([{
+      new Reasoner(store).reason([{
         premise: [new Quad(
           new NamedNode('http://example.org/s'),
           new NamedNode('a'),
@@ -134,7 +135,7 @@ describe('Reasoner', () => {
 
     it('Should apply rules containing variables only (circular and flipped)', () => {
       expect(store.size).equal(2);
-      new N3.Reasoner(store).reason([{
+      new Reasoner(store).reason([{
         premise: [new Quad(
           new Variable('?s'),
           new Variable('?a'),
@@ -166,7 +167,7 @@ describe('Reasoner', () => {
 
     it('Should apply rules with only predicate as variable', () => {
       expect(store.size).equal(2);
-      new N3.Reasoner(store).reason([{
+      new Reasoner(store).reason([{
         premise: [new Quad(
           new NamedNode('http://example.org/s'),
           new Variable('?a'),
@@ -204,7 +205,7 @@ describe('Reasoner', () => {
       ),
     ]);
     expect(store.size).equal(3);
-    new N3.Reasoner(store).reason([{
+    new Reasoner(store).reason([{
       premise: [new Quad(
         new Variable('?s'),
         new NamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
@@ -252,7 +253,7 @@ describe('Reasoner', () => {
       )]
     );
 
-    new N3.Reasoner(store).reason([
+    new Reasoner(store).reason([
       {
         premise: [
           new Quad(
@@ -299,7 +300,7 @@ describe('Reasoner', () => {
     for (let i = 0; i < 5; i++) {
       const store = generateDeepTaxonomy(10 ** i);
 
-      new N3.Reasoner(store).reason(SUBCLASS_RULE);
+      new Reasoner(store).reason(SUBCLASS_RULE);
 
       return expect(store.has(
         new Quad(
@@ -315,11 +316,9 @@ describe('Reasoner', () => {
     // eslint-disable-next-line no-invalid-this
     this.timeout(500);
 
-    const store = new Store();
-    await load(path.join(__dirname, '../perf/data/foaf.ttl'), store);
-    await load(path.join(__dirname, '../perf/data/timbl.ttl'), store);
+    const store = await getTimblAndFoaf();
 
-    new N3.Reasoner(store).reason(RDFS_RULE);
+    new Reasoner(store).reason(RDFS_RULE);
     return expect(store.size).equal(1712);
   });
 });
