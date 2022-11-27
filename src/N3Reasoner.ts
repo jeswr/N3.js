@@ -14,6 +14,7 @@ import {} from '@rdfjs/types';
 // in multiple evaluations
 // I don't have a clean solution to this off the top of my head
 
+// We *need* a sharedEntityIndex to make this {remotely} performant
 
 function evaluateRule(graphs, rule, /* ... Some way of doing the has checks */) {
 
