@@ -31,21 +31,12 @@ export default class N3Store {
     this._size = 0;
     // `_graphs` contains subject, predicate, and object indexes per graph
     this._graphs = Object.create(null);
-    // `_ids` maps entities such as `http://xmlns.com/foaf/0.1/name` to numbers,
-    // saving memory by using only numbers as keys in `_graphs`
-    // this._id = 0;
-    // this._ids = Object.create(null);
-    // this._ids['><'] = 0; // dummy entry, so the first actual key is non-zero
-    // this._entities = Object.create(null); // inverse of `_ids`
-    // `_blankNodeIndex` is the index of the last automatically named blank node
-    this._blankNodeIndex = 0;
 
     // Shift parameters if `quads` is not given
     if (!options && quads && !quads[0])
       options = quads, quads = null;
 
     this._entityIndex = new N3EntityIndex(options);
-
 
     // Add quads if passed
     if (quads)
@@ -549,18 +540,14 @@ export default class N3Store {
   // ### `forPredicates` executes the callback on all predicates that match the pattern.
   // Setting any field to `undefined` or `null` indicates a wildcard.
   forPredicates(callback, subject, object, graph) {
-    // Convert terms to internal string representation
-    subject = subject && termToId(subject);
-    object = object && termToId(object);
-    graph = graph && termToId(graph);
 
-    const ids = this._ids, graphs = this._getGraphs(graph);
+    const graphs = this._getGraphs(graph && termToId(graph));
     let content, subjectId, objectId;
     callback = this._uniqueEntities(callback);
 
     // Translate IRIs to internal index keys.
-    if (isString(subject) && !(subjectId = ids[subject]) ||
-        isString(object)  && !(objectId  = ids[object]))
+    if (subject && !(subjectId = this._entityIndex.termToMaybeId(subject)) ||
+        object  && !(objectId  = this._entityIndex.termToMaybeId(object)))
       return;
 
     for (graph in graphs) {
@@ -597,17 +584,14 @@ export default class N3Store {
   // Setting any field to `undefined` or `null` indicates a wildcard.
   forObjects(callback, subject, predicate, graph) {
     // Convert terms to internal string representation
-    subject = subject && termToId(subject);
-    predicate = predicate && termToId(predicate);
-    graph = graph && termToId(graph);
 
-    const ids = this._ids, graphs = this._getGraphs(graph);
+    const graphs = this._getGraphs(graph && termToId(graph));
     let content, subjectId, predicateId;
     callback = this._uniqueEntities(callback);
 
     // Translate IRIs to internal index keys.
-    if (isString(subject)   && !(subjectId   = ids[subject]) ||
-        isString(predicate) && !(predicateId = ids[predicate]))
+    if (subject && !(subjectId = this._entityIndex.termToMaybeId(subject)) ||
+        predicate && !(predicateId = this._entityIndex.termToMaybeId(predicate)))
       return;
 
     for (graph in graphs) {
