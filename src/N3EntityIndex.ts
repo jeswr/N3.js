@@ -93,3 +93,55 @@ export class N3EntityIndex {
     return this.factory.blankNode(name.slice(2));
   }
 }
+
+// TODO: Use map like below (don't forget to add get/set usge in the blank node method)
+// export class N3EntityIndex {
+//   // This should *not* be written to outside of this class
+//   private ids: Map<string, number> = new Map();
+//   // This should *not* be written to outside of this class
+//   // TODO: See if a proper map should be used here
+//   private entities: Map<number, string> = new Map();
+//   // TODO: Use bigint
+//   private id = 0;
+//   private blankNodeIndex = 0;
+//   private factory: RDF.DataFactory;
+
+//   constructor(options?: { factory?: RDF.DataFactory }) {
+//     this.factory = options?.factory || DataFactory;
+//   }
+
+//   public termToId(term: RDF.Term): number {
+//     const ind = termToId(term);
+//     return this.ids.get(ind) || (this.entities.set(++this.id, ind), this.ids.set(ind, this.id), this.id);
+//   }
+
+//   public termToMaybeId(term: RDF.Term): number | undefined {
+//     return this.ids.get(termToId(term));
+//   }
+
+//   public termFromId(id: number): RDF.Term {
+//     // TODO: See if this causes performance problems
+//     if (!this.entities.has(id)) {
+//       throw new Error(`ID ${id} not in EntityIndex`)
+//     }
+//     return termFromId(this.entities.get(id), this.factory);
+//   }
+
+//   public createBlankNode(suggestedName?: string) {
+//     let name: string, index: number;
+//     // Generate a name based on the suggested name
+//     if (suggestedName) {
+//       name = suggestedName = `_:${suggestedName}`, index = 1;
+//       while (this.ids[name])
+//         name = suggestedName + index++;
+//     }
+//     // Generate a generic blank node name
+//     else {
+//       do { name = `_:b${this.blankNodeIndex++}`; }
+//       while (this.ids[name]);
+//     }
+//     // Add the blank node to the entities, avoiding the generation of duplicates
+//     this.entities[this.ids[name] = ++this.id] = name;
+//     return this.factory.blankNode(name.slice(2));
+//   }
+// }

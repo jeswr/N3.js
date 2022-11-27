@@ -100,39 +100,33 @@ export default class N3Store {
   // Finally, `graphId` will be the graph of the created quads.
   *_findInIndex(index0, key0, key1, key2, name0, name1, name2, graphId) {
     let tmp, index1, index2;
-    const entityKeys = this._entities;
     const graph = termFromId(graphId, this._factory);
     const parts = { subject: null, predicate: null, object: null };
     
     
     
     
-    for (const key in [key0, key1, key2]) {
-      if (key) {
+    // for (const key in [key0, key1, key2]) {
+    //   if (key) {
 
-      } else {
+    //   } else {
 
-      }
-    }
+    //   }
+    // }
 
     
-
-
+    
     // If a key is specified, use only that part of index 0.
-    if (key0) (tmp = index0, index0 = {})[key0] = tmp[key0];
-    for (const value0 in index0) {
-      if (index1 = index0[value0]) {
-        parts[name0] = termFromId(entityKeys[value0], this._factory);
+    for (const value0 in key0 ? { [key0]: index0[key0] } : index0) {
+      if ((index1 = index0[value0]) && (!key1 || (index2 = index1[key1]))) {
+        parts[name0] = this._entityIndex.termFromId(value0);
         // If a key is specified, use only that part of index 1.
-        if (key1) (tmp = index1, index1 = {})[key1] = tmp[key1];
-        for (const value1 in index1) {
-          if (index2 = index1[value1]) {
-            parts[name1] = termFromId(entityKeys[value1], this._factory);
-            // If a key is specified, use only that part of index 2, if it exists.
-            const values = key2 ? (key2 in index2 ? [key2] : []) : Object.keys(index2);
-            // Create quads for all items found in index 2.
-            for (let l = 0; l < values.length; l++) {
-              parts[name2] = termFromId(entityKeys[values[l]], this._factory);
+        for (const value1 in key1 ? { [key1]: index1[key1] } : index1) {
+          if ((index2 = index1[value1]) && (!key2 || (key2 in index2))) {
+            parts[name1] = this._entityIndex.termFromId(value1);
+            // TODO: Use a set for the inner index
+            for (const value2 in key2 ? { [key2]: index2[key2] } : index2) {
+              parts[name2] = this._entityIndex.termFromId(value2);
               yield this._factory.quad(parts.subject, parts.predicate, parts.object, graph);
             }
           }
@@ -248,9 +242,6 @@ export default class N3Store {
     // graph = entityIndex.termToId(graph);
 
     // Convert terms to internal string representation
-    subject = termToId(subject);
-    predicate = termToId(predicate);
-    object = termToId(object);
     graph = termToId(graph);
 
     // Find the graph that will contain the triple
