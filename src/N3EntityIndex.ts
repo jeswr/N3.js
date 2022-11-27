@@ -26,11 +26,19 @@ export class Graphs {
 
 }
 
+// TODO: Use these
+const IDS = Symbol('ids');
+const ID = Symbol('id');
+const ENTITIES = Symbol('entities');
+const BLANK_NODE_INDEX = Symbol('blankNodeIndex');
+const FACTORY = Symbol('factory')
+
 export class N3EntityIndex {
   // This should *not* be written to outside of this class
   private ids: Record<string, number> = {};
   // This should *not* be written to outside of this class
   private entities: Record<number, string> = {};
+  // TODO: Use bigint
   private id = 1;
   private blankNodeIndex = 0;
   private factory: RDF.DataFactory;
