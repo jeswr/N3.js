@@ -17,6 +17,7 @@ export default class N3Store {
     this._ids = Object.create(null);
     this._entities = Object.create(null); // inverse of `_ids`
 
+    // TODO: Probably make this per named-graph rather than globally scoped
     this._nestedSubjects = Object.create(null);
     this._nestedPredicates = Object.create(null);
     this._nestedObjects = Object.create(null);
@@ -72,6 +73,27 @@ export default class N3Store {
       : termToId(term);
 
     return this._ids[str] || (this._ids[this._entities[++this._id] = str] = this._id);
+  }
+
+  _findInNestedIndex(index0, key0, key1, key2) {
+    let tmp, index1, index2;
+
+    // If a key is specified, use only that part of index 0.
+    if (key0) (tmp = index0, index0 = {})[key0] = tmp[key0];
+    for (const value0 in index0) {
+      if (index1 = index0[value0]) {
+        if (key1) (tmp = index1, index1 = {})[key1] = tmp[key1];
+        for (const value1 in index1) {
+          if (index2 = index1[value1]) {
+            const values = key2 ? (key2 in index2 ? [key2] : []) : Object.keys(index2);
+            // Create quads for all items found in index 2.
+            for (let l = 0; l < values.length; l++) {
+              yield* Object.values(values[l])
+            }
+          }
+        }
+      }
+    }
   }
 
   _addNestedQuad(subject,   predicate, object, q) {
@@ -346,6 +368,83 @@ export default class N3Store {
     return stream;
   }
 
+  // Get nested quads matching a particular pattern
+  *_getNested(quad) {
+    let subject = quad.subject,
+        predicate = quad.predicate,
+        object = quad.object;
+
+    if (subject   && !(subject   = this._termToNumericId(subject))   ||
+        predicate && !(predicate = this._termToNumericId(predicate)) ||
+        object    && !(object    = this._termToNumericId(object)))
+      return;
+
+
+    if (subject) {
+      if (object)
+        // If subject and object are given, the object index will be the fastest
+        yield* this._findInNestedIndex(this._nestedObjects, object, subject, predicate);
+      else
+        // If only subject and possibly predicate are given, the subject index will be the fastest
+        yield* this._findInNestedIndex(this._nestedSubjects, subject, predicate);
+    }
+    else if (predicate)
+      // If only predicate and possibly object are given, the predicate index will be the fastest
+      yield* this._findInNestedIndex(this._nestedPredicates, predicate, object);
+    else if (object)
+      // If only object is given, the object index will be the fastest
+      yield* this._findInNestedIndex(this._nestedObjects, object);
+    else
+      // If nothing is given, iterate subjects and predicates first
+      yield* this._findInNestedIndex(this._nestedSubjects);
+  }
+
+  matchDeep(subject, predicate, object, graph) {
+    if (subject)
+
+
+    // Convert terms to internal string representation
+    // graph = graph && termToId(graph);
+
+    // const graphs = this._getGraphs(graph);
+    // let content, subjectId, predicateId, objectId;
+
+    // // Translate IRIs to internal index keys.
+    // if (subject   && !(subjectId   = this._termToNumericId(subject))   ||
+    //     predicate && !(predicateId = this._termToNumericId(predicate)) ||
+    //     object    && !(objectId    = this._termToNumericId(object)))
+    //   return;
+
+    // for (const graphId in graphs) {
+    //   // Only if the specified graph contains triples, there can be results
+    //   if (content = graphs[graphId]) {
+    //     // Choose the optimal index, based on what fields are present
+    //     if (subjectId) {
+    //       if (objectId)
+    //         // If subject and object are given, the object index will be the fastest
+    //         yield* this._findInIndex(content.objects, objectId, subjectId, predicateId,
+    //                           'object', 'subject', 'predicate', graphId);
+    //       else
+    //         // If only subject and possibly predicate are given, the subject index will be the fastest
+    //         yield* this._findInIndex(content.subjects, subjectId, predicateId, null,
+    //                           'subject', 'predicate', 'object', graphId);
+    //     }
+    //     else if (predicateId)
+    //       // If only predicate and possibly object are given, the predicate index will be the fastest
+    //       yield* this._findInIndex(content.predicates, predicateId, objectId, null,
+    //                         'predicate', 'object', 'subject', graphId);
+    //     else if (objectId)
+    //       // If only object is given, the object index will be the fastest
+    //       yield* this._findInIndex(content.objects, objectId, null, null,
+    //                         'object', 'subject', 'predicate', graphId);
+    //     else
+    //       // If nothing is given, iterate subjects and predicates first
+    //       yield* this._findInIndex(content.subjects, null, null, null,
+    //                         'subject', 'predicate', 'object', graphId);
+    //   }
+    // }
+  }
+
   // ### `removeQuad` removes a quad from the store if it exists
   removeQuad(subject, predicate, object, graph) {
     // Shift arguments if a quad object is given instead of components
@@ -372,19 +471,33 @@ export default class N3Store {
     this._removeFromIndex(graphItem.predicates, predicate, object,    subject);
     this._removeFromIndex(graphItem.objects,    object,    subject,   predicate);
 
+    // As an alternative to this block of code; we could keep a record of how many quads each term appears in
+
     // TODO: Make sure to add a check for the *nested* graphs as well
-    let canDeleteSubject = graphItem.subjects[subject] && graphItem.predicates[subject] && graphItem.objects[subject],
-        canDeletePredicate = graphItem.subjects[predicate] && graphItem.predicates[predicate] && graphItem.objects[predicate],
-        canDeleteObject = graphItem.subjects[object] && graphItem.predicates[object] && graphItem.objects[object];
+    let canDeleteSubject = 
+          // As an optimisation check this graph first as the entities are most likely to still be in here
+          !graphItem.subjects[subject] && !graphItem.predicates[subject] && !graphItem.objects[subject] &&
+          // This is necessary to make sure that we don't delete quads from the nested graph
+          !this._nestedSubjects[subject] && !this._nestedPredicates[subject] && !this._nestedPredicates[subject],
+        canDeletePredicate = 
+          !graphItem.subjects[predicate] && !graphItem.predicates[predicate] && !graphItem.objects[predicate] &&
+          !this._nestedSubjects[predicate] && !this._nestedPredicates[predicate] && !this._nestedPredicates[predicate],
+        canDeleteObject = 
+          !graphItem.subjects[object] && !graphItem.predicates[object] && !graphItem.objects[object] &&
+          !this._nestedSubjects[object] && !this._nestedPredicates[object] && !this._nestedPredicates[object];
+
+    this._removeFromNestedIndex(this._nestedSubjects,   subject,   predicate, object, q);
+    this._removeFromNestedIndex(this._nestedPredicates, predicate, object,    subject, q);
+    this._removeFromNestedIndex(this._nestedObjects,    object,    subject,   predicate, q);
 
     const graphsList = this._getGraphs();
 
     if (graphs.length > 1 && (canDeleteSubject || canDeletePredicate || canDeleteObject)) {
       for (const graph of graphsList) {
         if (
-            !(canDeleteSubject &&= graph.subjects[subject] && graph.predicates[subject] && graph.objects[subject]) &&
-            !(canDeletePredicate &&= graph.subjects[predicate] && graph.predicates[predicate] && graph.objects[predicate]) &&
-            !(canDeleteObject &&= graph.subjects[object] && graph.predicates[object] && graph.objects[object])
+            !(canDeleteSubject &&= !graph.subjects[subject] && !graph.predicates[subject] && !graph.objects[subject]) &&
+            !(canDeletePredicate &&= !graph.subjects[predicate] && !graph.predicates[predicate] && !graph.objects[predicate]) &&
+            !(canDeleteObject &&= !graph.subjects[object] && !graph.predicates[object] && !graph.objects[object])
           )
           break;
       }
