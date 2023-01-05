@@ -16,6 +16,11 @@ export default class N3Store {
     this._id = 0;
     this._ids = Object.create(null);
     this._entities = Object.create(null); // inverse of `_ids`
+
+    this._nestedSubjects = Object.create(null);
+    this._nestedPredicates = Object.create(null);
+    this._nestedObjects = Object.create(null);
+
     // `_blankNodeIndex` is the index of the last automatically named blank node
     this._blankNodeIndex = 0;
 
@@ -67,6 +72,40 @@ export default class N3Store {
       : termToId(term);
 
     return this._ids[str] || (this._ids[this._entities[++this._id] = str] = this._id);
+  }
+
+  _addNestedQuad(subject,   predicate, object, q) {
+    this._addToNestedIndex(this._nestedSubjects,   subject,   predicate, object, q);
+    this._addToNestedIndex(this._nestedPredicates, predicate, object,    subject, q);
+    this._addToNestedIndex(this._nestedObjects,    object,    subject,   predicate, q);
+  }
+
+  _removeNestedQuad(subject,   predicate, object, q) {
+    this._removeFromNestedIndex(this._nestedSubjects,   subject,   predicate, object, q);
+    this._removeFromNestedIndex(this._nestedPredicates, predicate, object,    subject, q);
+    this._removeFromNestedIndex(this._nestedObjects,    object,    subject,   predicate, q);
+  }
+
+  _addToNestedIndex(index0, key0, key1, key2, q) {
+    // Create layers as necessary
+    const index1 = index0[key0] || (index0[key0] = {});
+    const index2 = index1[key1] || (index1[key1] = {});
+    const index3 = index2[key2] || (index2[key2] = {});
+    index3[q] = null;
+  }
+
+  _removeFromNestedIndex(index0, key0, key1, key2, q) {
+    // Create layers as necessary
+    const index1 = index0[key0], index2 = index1[key1], index3 = index2[key2];
+    
+    delete index3[q];
+    // Remove intermediary index layers if they are empty
+    for (const _ in index3) return;
+    delete index2[key2];
+    for (const _ in index2) return;
+    delete index1[key1];
+    for (const _ in index1) return;
+    delete index0[key0];
   }
 
   // ## Public properties
@@ -332,6 +371,30 @@ export default class N3Store {
     this._removeFromIndex(graphItem.subjects,   subject,   predicate, object);
     this._removeFromIndex(graphItem.predicates, predicate, object,    subject);
     this._removeFromIndex(graphItem.objects,    object,    subject,   predicate);
+
+    // TODO: Make sure to add a check for the *nested* graphs as well
+    let canDeleteSubject = graphItem.subjects[subject] && graphItem.predicates[subject] && graphItem.objects[subject],
+        canDeletePredicate = graphItem.subjects[predicate] && graphItem.predicates[predicate] && graphItem.objects[predicate],
+        canDeleteObject = graphItem.subjects[object] && graphItem.predicates[object] && graphItem.objects[object];
+
+    const graphsList = this._getGraphs();
+
+    if (graphs.length > 1 && (canDeleteSubject || canDeletePredicate || canDeleteObject)) {
+      for (const graph of graphsList) {
+        if (
+            !(canDeleteSubject &&= graph.subjects[subject] && graph.predicates[subject] && graph.objects[subject]) &&
+            !(canDeletePredicate &&= graph.subjects[predicate] && graph.predicates[predicate] && graph.objects[predicate]) &&
+            !(canDeleteObject &&= graph.subjects[object] && graph.predicates[object] && graph.objects[object])
+          )
+          break;
+      }
+    }
+
+    // For any canDelete that is enabled
+    if (canDeleteSubject) {
+      // TODO: Remove 
+    }
+
     if (this._size !== null) this._size--;
 
     // Remove the graph if it is empty
