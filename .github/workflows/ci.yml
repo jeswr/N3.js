@@ -18,7 +18,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm run test
-  
+
   lint:
     runs-on: ubuntu-latest
     strategy:
@@ -34,13 +34,14 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm run lint
-    
+
   spec:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         node-version: [12.x, 14.x, 16.x, 18.x, 20.x, 22.x]
+        spec: [1-1-turtle, 1-1-ntriples, 1-1-nquads, 1-1-trig, 1-2-turtle, 1-2-ntriples, 1-2-nquads, 1-2-trig]
     steps:
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
@@ -48,10 +49,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - uses: actions/checkout@v4
       - run: npm ci
-      - run: npm run spec-turtle
-      - run: npm run spec-ntriples
-      - run: npm run spec-nquads
-      - run: npm run spec-trig
+      - run: npm run spec-${{ matrix.spec }}
 
   docs:
     runs-on: ubuntu-latest
