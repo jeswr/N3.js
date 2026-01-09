@@ -376,7 +376,7 @@ function literal(value, languageOrDataType) {
 
   // Create a language-tagged string with base direction
   if (languageOrDataType !== undefined && !('termType' in languageOrDataType)) {
-    return new Literal(`"${value}"@${languageOrDataType.language.toLowerCase()}--${languageOrDataType.direction.toLowerCase()}`);
+    return new Literal(`"${value}"@${languageOrDataType.language.toLowerCase()}${languageOrDataType.direction ? `--${languageOrDataType.direction.toLowerCase()}` : ''}`);
   }
 
   // Automatically determine datatype for booleans and numbers
