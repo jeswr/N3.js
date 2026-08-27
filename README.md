@@ -424,7 +424,7 @@ Every `EntityIndex` created by that module uses the same registry; the registry 
 Separately loaded copies of N3.js retain separate registries so different package versions do not share private encodings.
 
 With the default data factory, store lookup and iteration methods emit virtual quads backed by numeric registry identifiers.
-Their subject, predicate, object, graph, and encoded term values are resolved only when the corresponding getters are read; repeated reads return the same component object.
+Ordinary accessor properties, rather than JavaScript `Proxy` objects, resolve their subject, predicate, object, graph, and encoded term values only when read; repeated reads return the same component object.
 An emitted virtual term keeps its originating entity scope alive so its identifier remains valid, while stores configured with a custom data factory continue to create that factory's terms eagerly.
 
 Operations that enumerate their output, such as `filter` and `map`, create an independent scope containing only the output entities.

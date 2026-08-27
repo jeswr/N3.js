@@ -1817,8 +1817,11 @@ describe('Store', () => {
 
       expect(result).toBeInstanceOf(Quad);
       expect(result.constructor).toBe(Quad);
-      expect(Object.getOwnPropertySymbols(result).map(symbol => result[symbol]))
-        .toContain(store._entityScope);
+      for (const component of ['_subject', '_predicate', '_object', '_graph']) {
+        const descriptor = Object.getOwnPropertyDescriptor(result, component);
+        expect(descriptor.get).toBeInstanceOf(Function);
+        expect(descriptor.set).toBeInstanceOf(Function);
+      }
       for (const component of ['subject', 'predicate', 'object', 'graph'])
         expect(Object.getOwnPropertyDescriptor(Quad.prototype, component).get)
           .toBeInstanceOf(Function);
@@ -1827,6 +1830,9 @@ describe('Store', () => {
       expect(subject).toBeInstanceOf(BlankNode);
       expect(subject.constructor).toBe(BlankNode);
       expect(Object.keys(subject)).toEqual(['id']);
+      const idDescriptor = Object.getOwnPropertyDescriptor(subject, 'id');
+      expect(idDescriptor.get).toBeInstanceOf(Function);
+      expect(idDescriptor.set).toBeInstanceOf(Function);
       expect(subject.termType).toBe('BlankNode');
       expect(subject.value).toBe('subject');
       expect(result.subject).toBe(subject);
@@ -1834,6 +1840,7 @@ describe('Store', () => {
       expect(subject.value).toBe('subject');
       expect(subject.id).toBe('_:subject');
       expect(Object.isFrozen(subject)).toBe(true);
+      expect(() => { subject.id = '_:changed'; }).toThrow(TypeError);
       expect(store._termToNumericId(subject)).toBe(store._termToNumericId(source.subject));
 
       expect(result.predicate).toBeInstanceOf(Variable);
@@ -1846,10 +1853,35 @@ describe('Store', () => {
       expect(result.graph).toBeInstanceOf(NamedNode);
       expect(result).toEqual(source);
       expect(result.toJSON()).toEqual(source.toJSON());
+      expect(structuredClone(result)).toEqual(structuredClone(source));
       expect(() => Object.freeze(result)).not.toThrow();
       expect(result.subject.value).toBe('subject');
       expect(result.id).toBe('');
       expect(Object.isFrozen(result)).toBe(true);
+      expect(() => { result._subject = namedNode('changed'); }).toThrow(TypeError);
+    });
+
+    it('should update accessor-backed terms and invalidate their numeric IDs', () => {
+      const store = new Store([
+        quad(namedNode('subject'), namedNode('predicate'), namedNode('object')),
+      ]);
+      const [result] = store.getQuads();
+      const subject = result.subject;
+
+      subject.id = 'replacement';
+      expect(subject.value).toBe('replacement');
+      expect(store._termToNumericId(subject)).toBeUndefined();
+
+      result.id = 'replacement-quad';
+      result._subject = namedNode('other');
+      result._predicate = namedNode('other-predicate');
+      result._object = namedNode('other-object');
+      result._graph = namedNode('other-graph');
+      expect(result.id).toBe('replacement-quad');
+      expect(result.subject).toEqual(namedNode('other'));
+      expect(result.predicate).toEqual(namedNode('other-predicate'));
+      expect(result.object).toEqual(namedNode('other-object'));
+      expect(result.graph).toEqual(namedNode('other-graph'));
     });
 
     it('should not resolve component encodings before their getters are read', () => {

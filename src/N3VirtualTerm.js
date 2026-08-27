@@ -6,88 +6,87 @@ import {
   Variable,
 } from './N3DataFactory';
 
-const NUMERIC_ID = Symbol('numericId');
-const SCOPE = Symbol('scope');
+const STATE = Symbol('virtualTermState');
 
-function getVirtualDescriptor(target, property) {
-  const descriptor = Reflect.getOwnPropertyDescriptor(target, property);
-  return property === SCOPE ? { ...descriptor, enumerable: false } : descriptor;
+function getState(instance) {
+  return instance[STATE];
 }
 
-function preventTargetExtensions(target) {
-  Object.defineProperty(target, SCOPE, { enumerable: false });
-  return Reflect.preventExtensions(target);
+function assertMutable(instance) {
+  if (Object.isFrozen(instance))
+    throw new TypeError('Cannot modify a frozen virtual term');
 }
 
-const virtualTermHandler = {
-  get(target, property, receiver) {
-    if (property === NUMERIC_ID)
-      return typeof target.id === 'number' ? target.id : undefined;
-    return property === 'id' && typeof target.id === 'number' ?
-      target[SCOPE]._registry._entities[target.id] :
-      Reflect.get(target, property, receiver);
+const TERM_ACCESSORS = {
+  get id() {
+    const state = getState(this);
+    return state.numericId === undefined ? state.id :
+      state.scope._registry._entities[state.numericId];
   },
-  getOwnPropertyDescriptor: getVirtualDescriptor,
-  preventExtensions(target) {
-    target.id = target[SCOPE]._registry._entities[target.id];
-    return preventTargetExtensions(target);
+  set id(id) {
+    assertMutable(this);
+    const state = getState(this);
+    state.numericId = undefined;
+    state.id = id;
   },
 };
+const TERM_DESCRIPTORS = Object.getOwnPropertyDescriptors(TERM_ACCESSORS);
 
-function expandComposite(target) {
-  if (target._subject !== null)
+function expandComposite(state) {
+  if (state.components !== null)
     return;
-  const parts = target[SCOPE]._registry._entities[target.id].split('.');
-  target._subject = Number(parts[1]);
-  target._predicate = Number(parts[2]);
-  target._object = Number(parts[3]);
-  target._graph = Number(parts[4]) || 1;
+  const parts = state.scope._registry._entities[state.numericId].split('.');
+  state.components = [
+    Number(parts[1]),
+    Number(parts[2]),
+    Number(parts[3]),
+    Number(parts[4]) || 1,
+  ];
 }
 
-function getComponent(target, property) {
-  expandComposite(target);
-  const component = target[property];
+function getComponent(instance, index) {
+  const state = getState(instance);
+  expandComposite(state);
+  const component = state.components[index];
   return typeof component === 'number' ?
-    (target[property] = virtualTermFromNumericId(component, target[SCOPE])) : component;
+    (state.components[index] = virtualTermFromNumericId(component, state.scope)) : component;
 }
 
-const virtualQuadHandler = {
-  get(target, property, receiver) {
-    switch (property) {
-    case 'id':         return '';
-    case NUMERIC_ID:   return target.id || undefined;
-    case '_subject':   return getComponent(target, property);
-    case '_predicate': return getComponent(target, property);
-    case '_object':    return getComponent(target, property);
-    case '_graph':     return getComponent(target, property);
-    default:           return Reflect.get(target, property, receiver);
-    }
-  },
-  preventExtensions(target) {
-    for (const property of ['_subject', '_predicate', '_object', '_graph'])
-      getComponent(target, property);
-    target.id = '';
-    return preventTargetExtensions(target);
-  },
-  getOwnPropertyDescriptor: getVirtualDescriptor,
+function setComponent(instance, index, component) {
+  assertMutable(instance);
+  const state = getState(instance);
+  expandComposite(state);
+  state.components[index] = component;
+  state.numericId = undefined;
+}
+
+const QUAD_ACCESSORS = {
+  get id() { return getState(this).id; },
+  set id(id) { assertMutable(this); getState(this).id = id; },
+  get _subject() { return getComponent(this, 0); },
+  set _subject(subject) { setComponent(this, 0, subject); },
+  get _predicate() { return getComponent(this, 1); },
+  set _predicate(predicate) { setComponent(this, 1, predicate); },
+  get _object() { return getComponent(this, 2); },
+  set _object(object) { setComponent(this, 2, object); },
+  get _graph() { return getComponent(this, 3); },
+  set _graph(graph) { setComponent(this, 3, graph); },
 };
+const QUAD_DESCRIPTORS = Object.getOwnPropertyDescriptors(QUAD_ACCESSORS);
 
 function createVirtualTerm(prototype, numericId, scope) {
-  const target = Object.create(prototype);
-  target.id = numericId;
-  target[SCOPE] = scope;
-  return new Proxy(target, virtualTermHandler);
+  const term = Object.create(prototype, TERM_DESCRIPTORS);
+  Object.defineProperty(term, STATE, { value: { numericId, scope }, writable: true });
+  return term;
 }
 
-function createVirtualQuad(subject, predicate, object, graph, scope, compositeId) {
-  const target = Object.create(Quad.prototype);
-  target.id = compositeId || 0;
-  target._subject = subject;
-  target._predicate = predicate;
-  target._object = object;
-  target._graph = graph;
-  target[SCOPE] = scope;
-  return new Proxy(target, virtualQuadHandler);
+function createVirtualQuad(components, scope, numericId) {
+  const quad = Object.create(Quad.prototype, QUAD_DESCRIPTORS);
+  Object.defineProperty(quad, STATE, {
+    value: { components, id: '', numericId, scope },
+    writable: true,
+  });
+  return quad;
 }
 
 export function virtualTermFromNumericId(numericId, scope) {
@@ -100,17 +99,18 @@ export function virtualTermFromNumericId(numericId, scope) {
   case '?': return createVirtualTerm(Variable.prototype, numericId, scope);
   case '_': return createVirtualTerm(BlankNode.prototype, numericId, scope);
   case '"': return createVirtualTerm(Literal.prototype, numericId, scope);
-  case '.': return createVirtualQuad(null, null, null, null, scope, numericId);
+  case '.': return createVirtualQuad(null, scope, numericId);
   default:  return createVirtualTerm(NamedNode.prototype, numericId, scope);
   }
 }
 
 export function virtualQuadFromNumericIds(subject, predicate, object, graph, scope) {
   return createVirtualQuad(
-    Number(subject), Number(predicate), Number(object), Number(graph), scope,
+    [Number(subject), Number(predicate), Number(object), Number(graph)], scope,
   );
 }
 
 export function getNumericId(term, registry) {
-  return term && term[SCOPE]?._registry === registry ? term[NUMERIC_ID] : undefined;
+  const state = term && term[STATE];
+  return state?.scope._registry === registry ? state.numericId : undefined;
 }
