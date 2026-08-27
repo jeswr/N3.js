@@ -8,25 +8,12 @@ import {
 
 const NUMERIC_ID = Symbol('numericId');
 const SCOPE = Symbol('scope');
-const ID = Symbol('id');
 const COMPONENTS = ['_subject', '_predicate', '_object', '_graph'];
 const FROZEN_COMPONENTS = new WeakMap();
 
-function assertMutable(instance) {
-  if (Object.isFrozen(instance))
-    throw new TypeError('Cannot modify a frozen virtual term');
-}
-
 const TERM_ACCESSORS = {
   get id() {
-    const numericId = this[NUMERIC_ID];
-    return numericId === undefined ? this[ID] :
-      this[SCOPE]._registry._entities[numericId];
-  },
-  set id(id) {
-    assertMutable(this);
-    this[NUMERIC_ID] = undefined;
-    this[ID] = id;
+    return this[SCOPE]._registry._entities[this[NUMERIC_ID]];
   },
 };
 
@@ -76,14 +63,6 @@ function getComponent(instance, index) {
   return term;
 }
 
-function setComponent(instance, index, component) {
-  assertMutable(instance);
-  expandComposite(instance);
-  instance[COMPONENTS[index]] = component;
-  if (instance[NUMERIC_ID] !== undefined)
-    instance[NUMERIC_ID] = undefined;
-}
-
 function hiddenValue() {
   return { configurable: true, value: undefined, writable: true };
 }
@@ -92,7 +71,6 @@ const TERM_DESCRIPTORS = {
   ...Object.getOwnPropertyDescriptors(TERM_ACCESSORS),
   [NUMERIC_ID]: hiddenValue(),
   [SCOPE]: hiddenValue(),
-  [ID]: hiddenValue(),
 };
 const QUAD_SCOPE_DESCRIPTOR = hiddenValue();
 const QUAD_NUMERIC_ID_DESCRIPTOR = hiddenValue();
@@ -111,13 +89,9 @@ export class VirtualQuad extends Quad {
   }
 
   get subject() { return getComponent(this, 0); }
-  set subject(subject) { setComponent(this, 0, subject); }
   get predicate() { return getComponent(this, 1); }
-  set predicate(predicate) { setComponent(this, 1, predicate); }
   get object() { return getComponent(this, 2); }
-  set object(object) { setComponent(this, 2, object); }
   get graph() { return getComponent(this, 3); }
-  set graph(graph) { setComponent(this, 3, graph); }
 
   toJSON() {
     return {
@@ -146,7 +120,6 @@ function setDescriptorValue(descriptors, property, value) {
 function createVirtualTerm(prototype, numericId, scope) {
   setDescriptorValue(TERM_DESCRIPTORS, NUMERIC_ID, numericId);
   setDescriptorValue(TERM_DESCRIPTORS, SCOPE, scope);
-  setDescriptorValue(TERM_DESCRIPTORS, ID, undefined);
   const term = Object.create(prototype, TERM_DESCRIPTORS);
   setDescriptorValue(TERM_DESCRIPTORS, SCOPE, undefined);
   return term;

@@ -1835,7 +1835,7 @@ describe('Store', () => {
       for (const component of ['subject', 'predicate', 'object', 'graph']) {
         const descriptor = Object.getOwnPropertyDescriptor(VirtualQuad.prototype, component);
         expect(descriptor.get).toBeInstanceOf(Function);
-        expect(descriptor.set).toBeInstanceOf(Function);
+        expect(descriptor.set).toBeUndefined();
       }
 
       const subject = result.subject;
@@ -1844,11 +1844,15 @@ describe('Store', () => {
       expect(Object.keys(subject)).toEqual(['id']);
       const idDescriptor = Object.getOwnPropertyDescriptor(subject, 'id');
       expect(idDescriptor.get).toBeInstanceOf(Function);
-      expect(idDescriptor.set).toBeInstanceOf(Function);
+      expect(idDescriptor.set).toBeUndefined();
       expect(subject.termType).toBe('BlankNode');
       expect(subject.value).toBe('subject');
       expect(result.subject).toBe(subject);
       expect(result._subject).toBe(subject);
+      expect(() => { subject.id = '_:changed'; }).toThrow(TypeError);
+      expect(() => { result.subject = namedNode('changed'); }).toThrow(TypeError);
+      expect(subject.value).toBe('subject');
+      expect(result.subject).toBe(subject);
       expect(() => Object.freeze(subject)).not.toThrow();
       expect(subject.value).toBe('subject');
       expect(subject.id).toBe('_:subject');
@@ -1900,7 +1904,7 @@ describe('Store', () => {
       expect(virtualQuoted.subject).toBe(subject);
     });
 
-    it('should propagate component cache errors on mutable virtual quads', () => {
+    it('should propagate component cache errors on unfrozen virtual quads', () => {
       const store = new Store([
         quad(namedNode('subject'), namedNode('predicate'), namedNode('object')),
       ]);
@@ -1910,7 +1914,7 @@ describe('Store', () => {
       expect(() => result.subject).toThrow(TypeError);
     });
 
-    it('should propagate nested component expansion errors on mutable virtual quads', () => {
+    it('should propagate nested component expansion errors on unfrozen virtual quads', () => {
       const quoted = quad(namedNode('quoted-s'), namedNode('quoted-p'), namedNode('quoted-o'));
       const store = new Store([
         quad(quoted, namedNode('predicate'), namedNode('object')),
@@ -1920,42 +1924,6 @@ describe('Store', () => {
       Object.defineProperty(virtualQuoted, '_subject', { writable: false });
 
       expect(() => virtualQuoted.subject).toThrow(TypeError);
-    });
-
-    it('should update accessor-backed terms and invalidate their numeric IDs', () => {
-      const store = new Store([
-        quad(namedNode('subject'), namedNode('predicate'), namedNode('object')),
-      ]);
-      const [result] = store.getQuads();
-      const subject = result.subject;
-
-      subject.id = 'replacement';
-      expect(subject.value).toBe('replacement');
-      expect(store._termToNumericId(subject)).toBeUndefined();
-
-      result.id = 'replacement-quad';
-      result.subject = namedNode('other');
-      result.predicate = namedNode('other-predicate');
-      result.object = namedNode('other-object');
-      result.graph = namedNode('other-graph');
-      expect(result.id).toBe('replacement-quad');
-      expect(result.subject).toEqual(namedNode('other'));
-      expect(result.predicate).toEqual(namedNode('other-predicate'));
-      expect(result.object).toEqual(namedNode('other-object'));
-      expect(result.graph).toEqual(namedNode('other-graph'));
-    });
-
-    it('should invalidate a quoted quad numeric ID when a component changes', () => {
-      const quoted = quad(namedNode('quoted-s'), namedNode('quoted-p'), namedNode('quoted-o'));
-      const store = new Store([
-        quad(quoted, namedNode('predicate'), namedNode('object')),
-      ]);
-      const virtualQuoted = store.getQuads()[0].subject;
-
-      virtualQuoted.subject = namedNode('replacement');
-
-      expect(virtualQuoted.subject).toEqual(namedNode('replacement'));
-      expect(store._termToNumericId(virtualQuoted)).toBeUndefined();
     });
 
     it('should not resolve component encodings before their getters are read', () => {
