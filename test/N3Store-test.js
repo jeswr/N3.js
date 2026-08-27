@@ -1817,6 +1817,9 @@ describe('Store', () => {
 
       expect(result).toBeInstanceOf(Quad);
       expect(result.constructor).toBe(Quad);
+      const hiddenValues = Object.getOwnPropertySymbols(result).map(symbol => result[symbol]);
+      expect(hiddenValues.some(Array.isArray)).toBe(false);
+      expect(hiddenValues.filter(value => value?.termType)).toEqual([]);
       for (const component of ['_subject', '_predicate', '_object', '_graph']) {
         const descriptor = Object.getOwnPropertyDescriptor(result, component);
         expect(descriptor.get).toBeInstanceOf(Function);
@@ -1836,6 +1839,7 @@ describe('Store', () => {
       expect(subject.termType).toBe('BlankNode');
       expect(subject.value).toBe('subject');
       expect(result.subject).toBe(subject);
+      expect(Object.getOwnPropertySymbols(result).map(symbol => result[symbol])).toContain(subject);
       expect(() => Object.freeze(subject)).not.toThrow();
       expect(subject.value).toBe('subject');
       expect(subject.id).toBe('_:subject');
@@ -1859,6 +1863,58 @@ describe('Store', () => {
       expect(result.id).toBe('');
       expect(Object.isFrozen(result)).toBe(true);
       expect(() => { result._subject = namedNode('changed'); }).toThrow(TypeError);
+    });
+
+    it('should cache components read after a virtual quad is frozen', () => {
+      const store = new Store([
+        quad(namedNode('subject'), namedNode('predicate'), namedNode('object')),
+      ]);
+      const [result] = store.getQuads();
+      Object.freeze(result);
+
+      const subject = result.subject;
+      expect(subject.value).toBe('subject');
+      expect(result.subject).toBe(subject);
+    });
+
+    it('should cache nested components read after a virtual quad is frozen', () => {
+      const quoted = quad(namedNode('quoted-s'), namedNode('quoted-p'), namedNode('quoted-o'));
+      const store = new Store([
+        quad(quoted, namedNode('predicate'), namedNode('object')),
+      ]);
+      const [result] = store.getQuads();
+      const virtualQuoted = result.subject;
+      Object.freeze(virtualQuoted);
+
+      const subject = virtualQuoted.subject;
+      expect(subject.value).toBe('quoted-s');
+      expect(virtualQuoted.subject).toBe(subject);
+    });
+
+    it('should propagate component cache errors on mutable virtual quads', () => {
+      const store = new Store([
+        quad(namedNode('subject'), namedNode('predicate'), namedNode('object')),
+      ]);
+      const [result] = store.getQuads();
+      const subject = Object.getOwnPropertySymbols(result)
+        .find(symbol => symbol.description === 'subject');
+      Object.defineProperty(result, subject, { writable: false });
+
+      expect(() => result.subject).toThrow(TypeError);
+    });
+
+    it('should propagate nested component expansion errors on mutable virtual quads', () => {
+      const quoted = quad(namedNode('quoted-s'), namedNode('quoted-p'), namedNode('quoted-o'));
+      const store = new Store([
+        quad(quoted, namedNode('predicate'), namedNode('object')),
+      ]);
+      const [result] = store.getQuads();
+      const virtualQuoted = result.subject;
+      const subject = Object.getOwnPropertySymbols(virtualQuoted)
+        .find(symbol => symbol.description === 'subject');
+      Object.defineProperty(virtualQuoted, subject, { writable: false });
+
+      expect(() => virtualQuoted.subject).toThrow(TypeError);
     });
 
     it('should update accessor-backed terms and invalidate their numeric IDs', () => {
