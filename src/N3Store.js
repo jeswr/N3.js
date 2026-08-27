@@ -2,6 +2,11 @@
 import { Readable } from 'readable-stream';
 import { default as N3DataFactory, termToId, termFromId } from './N3DataFactory';
 import { entityRegistry } from './N3EntityRegistry';
+import {
+  getNumericId,
+  virtualQuadFromNumericIds,
+  virtualTermFromNumericId,
+} from './N3VirtualTerm';
 import namespaces from './IRIs';
 import { isDefaultGraph } from './N3Util';
 import N3Writer from './N3Writer';
@@ -228,7 +233,16 @@ class N3EntityScope {
     return termFromId(id, this._factory);
   }
 
+  _termFromNumericId(id) {
+    return this._factory === N3DataFactory ?
+      virtualTermFromNumericId(id, this) : this._termFromId(this._entities[id]);
+  }
+
   _termToNumericId(term) {
+    const numericId = getNumericId(term, this._registry);
+    if (numericId !== undefined)
+      return numericId;
+
     if (term.termType === 'Quad') {
       const s = this._termToNumericId(term.subject),
           p = this._termToNumericId(term.predicate),
@@ -246,6 +260,10 @@ class N3EntityScope {
   }
 
   _termToNewNumericId(term) {
+    const numericId = getNumericId(term, this._registry);
+    if (numericId !== undefined)
+      return this._retain(numericId);
+
     let value;
     if (term && term.termType === 'Quad') {
       const s = this._termToNewNumericId(term.subject),
@@ -305,6 +323,7 @@ export default class N3Store {
     this._entityIndex = this._entityScope;
     this._entities = this._entityScope._entities;
     this._termFromId = this._entityScope._termFromId.bind(this._entityScope);
+    this._termFromNumericId = this._entityScope._termFromNumericId.bind(this._entityScope);
     this._termToNumericId = this._entityScope._termToNumericId.bind(this._entityScope);
     this._termToNewNumericId = this._entityScope._termToNewNumericId.bind(this._entityScope);
 
@@ -394,26 +413,31 @@ export default class N3Store {
   // Finally, `graphId` will be the graph of the created quads.
   *_findInIndex(index0, key0, key1, key2, name0, name1, name2, graphId) {
     let tmp, index1, index2;
+    const virtual = this._factory === N3DataFactory;
     const entityKeys = this._entities;
-    const graph = this._termFromId(entityKeys[graphId]);
+    const graph = virtual ? graphId : this._termFromId(entityKeys[graphId]);
     const parts = { subject: null, predicate: null, object: null };
 
     // If a key is specified, use only that part of index 0.
     if (key0) (tmp = index0, index0 = {})[key0] = tmp[key0];
     for (const value0 in index0) {
       if (index1 = index0[value0]) {
-        parts[name0] = this._termFromId(entityKeys[value0]);
+        parts[name0] = virtual ? value0 : this._termFromId(entityKeys[value0]);
         // If a key is specified, use only that part of index 1.
         if (key1) (tmp = index1, index1 = {})[key1] = tmp[key1];
         for (const value1 in index1) {
           if (index2 = index1[value1]) {
-            parts[name1] = this._termFromId(entityKeys[value1]);
+            parts[name1] = virtual ? value1 : this._termFromId(entityKeys[value1]);
             // If a key is specified, use only that part of index 2, if it exists.
             const values = key2 ? (key2 in index2 ? [key2] : []) : Object.keys(index2);
             // Create quads for all items found in index 2.
             for (let l = 0; l < values.length; l++) {
-              parts[name2] = this._termFromId(entityKeys[values[l]]);
-              yield this._factory.quad(parts.subject, parts.predicate, parts.object, graph);
+              parts[name2] = virtual ? values[l] : this._termFromId(entityKeys[values[l]]);
+              yield virtual ?
+                virtualQuadFromNumericIds(
+                  parts.subject, parts.predicate, parts.object, graph, this._entityScope,
+                ) :
+                this._factory.quad(parts.subject, parts.predicate, parts.object, graph);
             }
           }
         }
@@ -507,7 +531,7 @@ export default class N3Store {
     return id => {
       if (!(id in uniqueIds)) {
         uniqueIds[id] = true;
-        callback(this._termFromId(this._entities[id], this._factory));
+        callback(this._termFromNumericId(id));
       }
     };
   }
@@ -934,7 +958,7 @@ export default class N3Store {
       this.some(quad => {
         callback(quad.graph);
         return true; // Halt iteration of some()
-      }, subject, predicate, object, this._termFromId(this._entities[graph]));
+      }, subject, predicate, object, this._termFromNumericId(graph));
     }
   }
 

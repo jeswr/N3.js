@@ -7,10 +7,12 @@ import N3, {
 } from '../src';
 import EntityRegistry, { entityRegistry } from '../src/N3EntityRegistry';
 import {
+  BlankNode,
   NamedNode,
   Literal,
   DefaultGraph,
   Quad,
+  Variable,
 } from '../src/N3DataFactory';
 import namespaces from '../src/IRIs';
 import { Readable } from 'readable-stream';
@@ -1775,6 +1777,13 @@ describe('Store', () => {
         { subject: 's2', predicate: 'p1', object: 'o1' },
       ]);
       expect(store.addQuad('s1', 'p1', 'o1', 'c4')).toBe(true);
+      expect(store.addQuad(
+        new Quad(
+          new Quad(new NamedNode('qs'), new NamedNode('qp'), new NamedNode('qo'), new NamedNode('qg')),
+          new NamedNode('p1'),
+          new NamedNode('o1'),
+        ),
+      )).toBe(true);
     });
 
     it('should use the factory when returning quads', () => {
@@ -1783,8 +1792,139 @@ describe('Store', () => {
         { s: 'n-s1', p: 'n-p1', o: 'n-o2', g: 'defaultGraph' },
         { s: 'n-s1', p: 'n-p2', o: 'n-o2', g: 'defaultGraph' },
         { s: 'n-s2', p: 'n-p1', o: 'n-o1', g: 'defaultGraph' },
+        {
+          s: { s: 'n-qs', p: 'n-qp', o: 'n-qo', g: 'n-qg' },
+          p: 'n-p1',
+          o: 'n-o1',
+          g: 'defaultGraph',
+        },
         { s: 'n-s1', p: 'n-p1', o: 'n-o1', g: 'n-c4'         },
       ]);
+      expect(store._termFromNumericId(store._termToNumericId('c4'))).toBe('n-c4');
+    });
+  });
+
+  describe('A Store emitting virtual terms', () => {
+    it('should instantiate quad components and their values through getters', () => {
+      const source = quad(
+        DataFactory.blankNode('subject'),
+        DataFactory.variable('predicate'),
+        literal('object', namedNode('datatype')),
+        namedNode('graph'),
+      );
+      const store = new Store([source]);
+      const [result] = store.getQuads();
+
+      expect(result).toBeInstanceOf(Quad);
+      expect(result.constructor).toBe(Quad);
+      expect(Object.getOwnPropertySymbols(result).map(symbol => result[symbol]))
+        .toContain(store._entityScope);
+      for (const component of ['subject', 'predicate', 'object', 'graph'])
+        expect(Object.getOwnPropertyDescriptor(Quad.prototype, component).get)
+          .toBeInstanceOf(Function);
+
+      const subject = result.subject;
+      expect(subject).toBeInstanceOf(BlankNode);
+      expect(subject.constructor).toBe(BlankNode);
+      expect(Object.keys(subject)).toEqual(['id']);
+      expect(subject.termType).toBe('BlankNode');
+      expect(subject.value).toBe('subject');
+      expect(result.subject).toBe(subject);
+      expect(() => Object.freeze(subject)).not.toThrow();
+      expect(subject.value).toBe('subject');
+      expect(subject.id).toBe('_:subject');
+      expect(Object.isFrozen(subject)).toBe(true);
+      expect(store._termToNumericId(subject)).toBe(store._termToNumericId(source.subject));
+
+      expect(result.predicate).toBeInstanceOf(Variable);
+      expect(result.predicate.value).toBe('predicate');
+      expect(result.object).toBeInstanceOf(Literal);
+      expect(result.object.value).toBe('object');
+      expect(result.object.language).toBe('');
+      expect(result.object.direction).toBe('');
+      expect(result.object.datatype).toEqual(namedNode('datatype'));
+      expect(result.graph).toBeInstanceOf(NamedNode);
+      expect(result).toEqual(source);
+      expect(result.toJSON()).toEqual(source.toJSON());
+      expect(() => Object.freeze(result)).not.toThrow();
+      expect(result.subject.value).toBe('subject');
+      expect(result.id).toBe('');
+      expect(Object.isFrozen(result)).toBe(true);
+    });
+
+    it('should not resolve component encodings before their getters are read', () => {
+      const source = quad(namedNode('lazy-subject'), namedNode('predicate'), namedNode('object'));
+      const store = new Store([source]);
+      const subjectId = store._termToNumericId(source.subject);
+      const descriptor = Object.getOwnPropertyDescriptor(entityRegistry._entities, String(subjectId));
+      let reads = 0;
+      Object.defineProperty(entityRegistry._entities, subjectId, {
+        configurable: true,
+        enumerable: true,
+        get() {
+          reads++;
+          return descriptor.value;
+        },
+      });
+
+      try {
+        const [result] = store.getQuads();
+        expect(result.termType).toBe('Quad');
+        expect(reads).toBe(0);
+        expect(result.subject.termType).toBe('NamedNode');
+        expect(reads).toBe(1);
+        expect(result.subject.value).toBe('lazy-subject');
+        expect(reads).toBe(2);
+      }
+      finally {
+        Object.defineProperty(entityRegistry._entities, subjectId, descriptor);
+      }
+    });
+
+    it('should instantiate nested quoted quad components lazily', () => {
+      const quoted = quad(namedNode('quoted-s'), namedNode('quoted-p'), namedNode('quoted-o'));
+      const source = quad(quoted, namedNode('predicate'), namedNode('object'));
+      const store = new Store([source]);
+      const [result] = store.getQuads();
+      const virtualQuoted = result.subject;
+
+      expect(virtualQuoted).toBeInstanceOf(Quad);
+      expect(Object.getOwnPropertyDescriptor(Quad.prototype, 'subject').get)
+        .toBeInstanceOf(Function);
+      expect(virtualQuoted.subject.value).toBe('quoted-s');
+      expect(virtualQuoted.predicate.value).toBe('quoted-p');
+      expect(virtualQuoted.object.value).toBe('quoted-o');
+      expect(virtualQuoted.graph).toBeInstanceOf(DefaultGraph);
+      expect(virtualQuoted).toEqual(quoted);
+      expect(() => Object.freeze(virtualQuoted)).not.toThrow();
+      expect(store._termToNumericId(virtualQuoted)).toBe(store._termToNumericId(quoted));
+    });
+
+    it('should reuse same-registry numeric IDs without reading encoded values', () => {
+      const source = quad(namedNode('subject'), namedNode('predicate'), namedNode('object'));
+      const store = new Store([source]);
+      const [result] = store.getQuads();
+      const subject = result.subject;
+      const subjectId = store._termToNumericId(subject);
+      const encodedSubject = entityRegistry._entities[subjectId];
+      Object.defineProperty(entityRegistry._entities, subjectId, {
+        configurable: true,
+        get() { throw new Error('encoded value accessed'); },
+      });
+
+      const target = new Store();
+      try {
+        expect(() => target.addQuad(subject, result.predicate, result.object)).not.toThrow();
+      }
+      finally {
+        Object.defineProperty(entityRegistry._entities, subjectId, {
+          configurable: true,
+          enumerable: true,
+          value: encodedSubject,
+          writable: true,
+        });
+      }
+      expect(target.has(source)).toBe(true);
     });
   });
 
