@@ -20,6 +20,7 @@ describe('N3DatasetCoreFactory', () => {
     const dataset = factory.dataset(quads);
 
     expect(dataset).toBeInstanceOf(N3Store);
-    expect([...dataset.match(namedNode('http://example.org/subject1'))]).toEqual([quads[0]]);
+    const [result] = dataset.match(namedNode('http://example.org/subject1'));
+    expect(result.equals(quads[0])).toBe(true);
   });
 });

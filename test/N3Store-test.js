@@ -15,6 +15,7 @@ import {
   Variable,
 } from '../src/N3DataFactory';
 import namespaces from '../src/IRIs';
+import { VirtualQuad } from '../src/N3VirtualTerm';
 import { Readable } from 'readable-stream';
 import { arrayifyStream } from 'arrayify-stream';
 
@@ -763,9 +764,11 @@ describe('Store', () => {
 
       describe('with existing predicate and graph parameters', () => {
         it('should return all subjects with this predicate and graph', () => {
-          expect(store.getSubjects(new NamedNode('p1'), null, new DefaultGraph())).toEqual(expect.arrayContaining(
-            [new NamedNode('s1'), new NamedNode('s2'), new Quad(new NamedNode('s2'), new NamedNode('p2'), new NamedNode('o2'))],
-          ));
+          expect(store.getSubjects(new NamedNode('p1'), null, new DefaultGraph()).map(term => term.toJSON()))
+            .toEqual(expect.arrayContaining([
+              new NamedNode('s1'), new NamedNode('s2'),
+              new Quad(new NamedNode('s2'), new NamedNode('p2'), new NamedNode('o2')),
+            ].map(term => term.toJSON())));
         });
       });
 
@@ -777,9 +780,11 @@ describe('Store', () => {
 
       describe('with an existing predicate parameter', () => {
         it('should return all subjects with this predicate', () => {
-          expect(store.getSubjects(new NamedNode('p1'), null, null)).toEqual(expect.arrayContaining(
-            [new NamedNode('s1'), new NamedNode('s2'),  new Quad(new NamedNode('s2'), new NamedNode('p2'), new NamedNode('o2'))],
-          ));
+          expect(store.getSubjects(new NamedNode('p1'), null, null).map(term => term.toJSON()))
+            .toEqual(expect.arrayContaining([
+              new NamedNode('s1'), new NamedNode('s2'),
+              new Quad(new NamedNode('s2'), new NamedNode('p2'), new NamedNode('o2')),
+            ].map(term => term.toJSON())));
         });
       });
 
@@ -797,9 +802,11 @@ describe('Store', () => {
 
       describe('with no parameters', () => {
         it('should return all subjects', () => {
-          expect(store.getSubjects(null, null, null)).toEqual(expect.arrayContaining(
-            [new NamedNode('s1'), new NamedNode('s2'),  new Quad(new NamedNode('s2'), new NamedNode('p2'), new NamedNode('o2'))],
-          ));
+          expect(store.getSubjects(null, null, null).map(term => term.toJSON()))
+            .toEqual(expect.arrayContaining([
+              new NamedNode('s1'), new NamedNode('s2'),
+              new Quad(new NamedNode('s2'), new NamedNode('p2'), new NamedNode('o2')),
+            ].map(term => term.toJSON())));
         });
       });
     });
@@ -1816,18 +1823,20 @@ describe('Store', () => {
       const [result] = store.getQuads();
 
       expect(result).toBeInstanceOf(Quad);
-      expect(result.constructor).toBe(Quad);
+      expect(result).toBeInstanceOf(VirtualQuad);
+      expect(result.constructor).toBe(VirtualQuad);
       const hiddenValues = Object.getOwnPropertySymbols(result).map(symbol => result[symbol]);
       expect(hiddenValues.some(Array.isArray)).toBe(false);
       expect(hiddenValues.filter(value => value?.termType)).toEqual([]);
       for (const component of ['_subject', '_predicate', '_object', '_graph']) {
         const descriptor = Object.getOwnPropertyDescriptor(result, component);
+        expect(descriptor.value).toEqual(expect.any(Number));
+      }
+      for (const component of ['subject', 'predicate', 'object', 'graph']) {
+        const descriptor = Object.getOwnPropertyDescriptor(VirtualQuad.prototype, component);
         expect(descriptor.get).toBeInstanceOf(Function);
         expect(descriptor.set).toBeInstanceOf(Function);
       }
-      for (const component of ['subject', 'predicate', 'object', 'graph'])
-        expect(Object.getOwnPropertyDescriptor(Quad.prototype, component).get)
-          .toBeInstanceOf(Function);
 
       const subject = result.subject;
       expect(subject).toBeInstanceOf(BlankNode);
@@ -1839,7 +1848,7 @@ describe('Store', () => {
       expect(subject.termType).toBe('BlankNode');
       expect(subject.value).toBe('subject');
       expect(result.subject).toBe(subject);
-      expect(Object.getOwnPropertySymbols(result).map(symbol => result[symbol])).toContain(subject);
+      expect(result._subject).toBe(subject);
       expect(() => Object.freeze(subject)).not.toThrow();
       expect(subject.value).toBe('subject');
       expect(subject.id).toBe('_:subject');
@@ -1855,14 +1864,14 @@ describe('Store', () => {
       expect(result.object.direction).toBe('');
       expect(result.object.datatype).toEqual(namedNode('datatype'));
       expect(result.graph).toBeInstanceOf(NamedNode);
-      expect(result).toEqual(source);
+      expect(result.equals(source)).toBe(true);
       expect(result.toJSON()).toEqual(source.toJSON());
       expect(structuredClone(result)).toEqual(structuredClone(source));
       expect(() => Object.freeze(result)).not.toThrow();
       expect(result.subject.value).toBe('subject');
       expect(result.id).toBe('');
       expect(Object.isFrozen(result)).toBe(true);
-      expect(() => { result._subject = namedNode('changed'); }).toThrow(TypeError);
+      expect(() => { result.subject = namedNode('changed'); }).toThrow(TypeError);
     });
 
     it('should cache components read after a virtual quad is frozen', () => {
@@ -1896,9 +1905,7 @@ describe('Store', () => {
         quad(namedNode('subject'), namedNode('predicate'), namedNode('object')),
       ]);
       const [result] = store.getQuads();
-      const subject = Object.getOwnPropertySymbols(result)
-        .find(symbol => symbol.description === 'subject');
-      Object.defineProperty(result, subject, { writable: false });
+      Object.defineProperty(result, '_subject', { writable: false });
 
       expect(() => result.subject).toThrow(TypeError);
     });
@@ -1910,9 +1917,7 @@ describe('Store', () => {
       ]);
       const [result] = store.getQuads();
       const virtualQuoted = result.subject;
-      const subject = Object.getOwnPropertySymbols(virtualQuoted)
-        .find(symbol => symbol.description === 'subject');
-      Object.defineProperty(virtualQuoted, subject, { writable: false });
+      Object.defineProperty(virtualQuoted, '_subject', { writable: false });
 
       expect(() => virtualQuoted.subject).toThrow(TypeError);
     });
@@ -1929,15 +1934,28 @@ describe('Store', () => {
       expect(store._termToNumericId(subject)).toBeUndefined();
 
       result.id = 'replacement-quad';
-      result._subject = namedNode('other');
-      result._predicate = namedNode('other-predicate');
-      result._object = namedNode('other-object');
-      result._graph = namedNode('other-graph');
+      result.subject = namedNode('other');
+      result.predicate = namedNode('other-predicate');
+      result.object = namedNode('other-object');
+      result.graph = namedNode('other-graph');
       expect(result.id).toBe('replacement-quad');
       expect(result.subject).toEqual(namedNode('other'));
       expect(result.predicate).toEqual(namedNode('other-predicate'));
       expect(result.object).toEqual(namedNode('other-object'));
       expect(result.graph).toEqual(namedNode('other-graph'));
+    });
+
+    it('should invalidate a quoted quad numeric ID when a component changes', () => {
+      const quoted = quad(namedNode('quoted-s'), namedNode('quoted-p'), namedNode('quoted-o'));
+      const store = new Store([
+        quad(quoted, namedNode('predicate'), namedNode('object')),
+      ]);
+      const virtualQuoted = store.getQuads()[0].subject;
+
+      virtualQuoted.subject = namedNode('replacement');
+
+      expect(virtualQuoted.subject).toEqual(namedNode('replacement'));
+      expect(store._termToNumericId(virtualQuoted)).toBeUndefined();
     });
 
     it('should not resolve component encodings before their getters are read', () => {
@@ -1977,13 +1995,14 @@ describe('Store', () => {
       const virtualQuoted = result.subject;
 
       expect(virtualQuoted).toBeInstanceOf(Quad);
-      expect(Object.getOwnPropertyDescriptor(Quad.prototype, 'subject').get)
+      expect(virtualQuoted).toBeInstanceOf(VirtualQuad);
+      expect(Object.getOwnPropertyDescriptor(VirtualQuad.prototype, 'subject').get)
         .toBeInstanceOf(Function);
       expect(virtualQuoted.subject.value).toBe('quoted-s');
       expect(virtualQuoted.predicate.value).toBe('quoted-p');
       expect(virtualQuoted.object.value).toBe('quoted-o');
       expect(virtualQuoted.graph).toBeInstanceOf(DefaultGraph);
-      expect(virtualQuoted).toEqual(quoted);
+      expect(virtualQuoted.equals(quoted)).toBe(true);
       expect(() => Object.freeze(virtualQuoted)).not.toThrow();
       expect(store._termToNumericId(virtualQuoted)).toBe(store._termToNumericId(quoted));
     });
@@ -2454,11 +2473,15 @@ describe('Store', () => {
       'should still include results of original match after iterating while adding new data',
       () => {
         const m = store.match(null, null, null, null)[Symbol.iterator]();
-        expect(m.next().value).toEqual(new Quad(new NamedNode('s1'), new NamedNode('p1'), new NamedNode('o1')));
+        expect(m.next().value.toJSON()).toEqual(
+          new Quad(new NamedNode('s1'), new NamedNode('p1'), new NamedNode('o1')).toJSON(),
+        );
         store.add(new Quad(new NamedNode('s1'), new NamedNode('p1'), new NamedNode('o0')));
         store.add(new Quad(new NamedNode('s1'), new NamedNode('p1'), new NamedNode('o2')));
         store.add(new Quad(new NamedNode('s1'), new NamedNode('p1'), new NamedNode('o4')));
-        expect(m.next().value).toEqual(new Quad(new NamedNode('s1'), new NamedNode('p1'), new NamedNode('o3')));
+        expect(m.next().value.toJSON()).toEqual(
+          new Quad(new NamedNode('s1'), new NamedNode('p1'), new NamedNode('o3')).toJSON(),
+        );
         expect(m.next().done).toBe(true);
         expect([...store.match(null, null, null, null)]).toHaveLength(5);
       },
@@ -2682,7 +2705,7 @@ describe('Store', () => {
         expect(store1.reduce((acc, _) => acc + 1, 0)).toEqual(2);
         expect(store1.reduce((acc, quad) => acc + quad.subject.value.length, 0)).toEqual(4);
         expect(store1.reduce((acc, _) => acc, 0)).toEqual(0);
-        expect(store.reduce((acc, _) => acc)).toEqual(q[0]);
+        expect(store.reduce((acc, _) => acc).equals(q[0])).toBe(true);
       });
     });
 
@@ -2690,16 +2713,19 @@ describe('Store', () => {
       it('should convert to an array', () => {
         const quads = store1.toArray();
         expect(quads).toHaveLength(2);
-        expect(quads[0]).toEqual(q[0]);
-        expect(quads[1]).toEqual(q[1]);
+        expect(quads[0].equals(q[0])).toBe(true);
+        expect(quads[1].equals(q[1])).toBe(true);
       });
     });
 
     describe('#toStream', () => {
       it('should convert to a stream', async () => {
-        await expect(arrayifyStream(store2.toStream())).resolves.toEqual([q[0], q[2]]);
-        await expect(arrayifyStream(store1.toStream())).resolves.toEqual([q[0], q[1]]);
-        await expect(arrayifyStream(store.toStream())).resolves.toEqual([q[0]]);
+        expect((await arrayifyStream(store2.toStream())).map(quad => quad.toJSON()))
+          .toEqual([q[0], q[2]].map(quad => quad.toJSON()));
+        expect((await arrayifyStream(store1.toStream())).map(quad => quad.toJSON()))
+          .toEqual([q[0], q[1]].map(quad => quad.toJSON()));
+        expect((await arrayifyStream(store.toStream())).map(quad => quad.toJSON()))
+          .toEqual([q[0]].map(quad => quad.toJSON()));
         await expect(arrayifyStream(empty.toStream())).resolves.toEqual([]);
       });
     });
@@ -2750,7 +2776,7 @@ describe('Store', () => {
         let count = 0;
         store1.forEach(quad => {
           count++;
-          expect(quad).toEqual(count === 1 ? q[0] : q[1]);
+          expect(quad.equals(count === 1 ? q[0] : q[1])).toBe(true);
         });
         expect(count).toEqual(2);
       });

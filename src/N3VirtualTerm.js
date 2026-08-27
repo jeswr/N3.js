@@ -9,11 +9,7 @@ import {
 const NUMERIC_ID = Symbol('numericId');
 const SCOPE = Symbol('scope');
 const ID = Symbol('id');
-const SUBJECT = Symbol('subject');
-const PREDICATE = Symbol('predicate');
-const OBJECT = Symbol('object');
-const GRAPH = Symbol('graph');
-const COMPONENTS = [SUBJECT, PREDICATE, OBJECT, GRAPH];
+const COMPONENTS = ['_subject', '_predicate', '_object', '_graph'];
 const FROZEN_COMPONENTS = new WeakMap();
 
 function assertMutable(instance) {
@@ -35,7 +31,7 @@ const TERM_ACCESSORS = {
 };
 
 function expandComposite(instance) {
-  if (instance[SUBJECT] !== null)
+  if (instance._subject !== null)
     return undefined;
   const parts = instance[SCOPE]._registry._entities[instance[NUMERIC_ID]].split('.');
   const components = [
@@ -84,21 +80,9 @@ function setComponent(instance, index, component) {
   assertMutable(instance);
   expandComposite(instance);
   instance[COMPONENTS[index]] = component;
-  instance[NUMERIC_ID] = undefined;
+  if (instance[NUMERIC_ID] !== undefined)
+    instance[NUMERIC_ID] = undefined;
 }
-
-const QUAD_ACCESSORS = {
-  get id() { return this[ID]; },
-  set id(id) { assertMutable(this); this[ID] = id; },
-  get _subject() { return getComponent(this, 0); },
-  set _subject(subject) { setComponent(this, 0, subject); },
-  get _predicate() { return getComponent(this, 1); },
-  set _predicate(predicate) { setComponent(this, 1, predicate); },
-  get _object() { return getComponent(this, 2); },
-  set _object(object) { setComponent(this, 2, object); },
-  get _graph() { return getComponent(this, 3); },
-  set _graph(graph) { setComponent(this, 3, graph); },
-};
 
 function hiddenValue() {
   return { configurable: true, value: undefined, writable: true };
@@ -110,16 +94,48 @@ const TERM_DESCRIPTORS = {
   [SCOPE]: hiddenValue(),
   [ID]: hiddenValue(),
 };
-const QUAD_DESCRIPTORS = {
-  ...Object.getOwnPropertyDescriptors(QUAD_ACCESSORS),
-  [NUMERIC_ID]: hiddenValue(),
-  [SCOPE]: hiddenValue(),
-  [ID]: hiddenValue(),
-  [SUBJECT]: hiddenValue(),
-  [PREDICATE]: hiddenValue(),
-  [OBJECT]: hiddenValue(),
-  [GRAPH]: hiddenValue(),
-};
+const QUAD_SCOPE_DESCRIPTOR = hiddenValue();
+const QUAD_NUMERIC_ID_DESCRIPTOR = hiddenValue();
+
+export class VirtualQuad extends Quad {
+  constructor(subject, predicate, object, graph, scope, numericId) {
+    super(subject, predicate, object, graph);
+    QUAD_SCOPE_DESCRIPTOR.value = scope;
+    Object.defineProperty(this, SCOPE, QUAD_SCOPE_DESCRIPTOR);
+    QUAD_SCOPE_DESCRIPTOR.value = undefined;
+    if (numericId !== undefined) {
+      QUAD_NUMERIC_ID_DESCRIPTOR.value = numericId;
+      Object.defineProperty(this, NUMERIC_ID, QUAD_NUMERIC_ID_DESCRIPTOR);
+      QUAD_NUMERIC_ID_DESCRIPTOR.value = undefined;
+    }
+  }
+
+  get subject() { return getComponent(this, 0); }
+  set subject(subject) { setComponent(this, 0, subject); }
+  get predicate() { return getComponent(this, 1); }
+  set predicate(predicate) { setComponent(this, 1, predicate); }
+  get object() { return getComponent(this, 2); }
+  set object(object) { setComponent(this, 2, object); }
+  get graph() { return getComponent(this, 3); }
+  set graph(graph) { setComponent(this, 3, graph); }
+
+  toJSON() {
+    return {
+      termType:  this.termType,
+      subject:   this.subject.toJSON(),
+      predicate: this.predicate.toJSON(),
+      object:    this.object.toJSON(),
+      graph:     this.graph.toJSON(),
+    };
+  }
+
+  equals(other) {
+    return !!other && this.subject.equals(other.subject)     &&
+                      this.predicate.equals(other.predicate) &&
+                      this.object.equals(other.object)       &&
+                      this.graph.equals(other.graph);
+  }
+}
 
 // Reuse descriptor objects so an emitted term is the only per-result allocation.
 // Construction is synchronous; clear scope values afterwards to avoid retaining a store.
@@ -137,16 +153,7 @@ function createVirtualTerm(prototype, numericId, scope) {
 }
 
 function createVirtualQuad(subject, predicate, object, graph, scope, numericId) {
-  setDescriptorValue(QUAD_DESCRIPTORS, NUMERIC_ID, numericId);
-  setDescriptorValue(QUAD_DESCRIPTORS, SCOPE, scope);
-  setDescriptorValue(QUAD_DESCRIPTORS, ID, '');
-  setDescriptorValue(QUAD_DESCRIPTORS, SUBJECT, subject);
-  setDescriptorValue(QUAD_DESCRIPTORS, PREDICATE, predicate);
-  setDescriptorValue(QUAD_DESCRIPTORS, OBJECT, object);
-  setDescriptorValue(QUAD_DESCRIPTORS, GRAPH, graph);
-  const quad = Object.create(Quad.prototype, QUAD_DESCRIPTORS);
-  setDescriptorValue(QUAD_DESCRIPTORS, SCOPE, undefined);
-  return quad;
+  return new VirtualQuad(subject, predicate, object, graph, scope, numericId);
 }
 
 export function virtualTermFromNumericId(numericId, scope) {
