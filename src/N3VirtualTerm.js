@@ -8,7 +8,9 @@ import {
 
 const NUMERIC_ID = Symbol('numericId');
 const SCOPE = Symbol('scope');
+const VIRTUAL_STATE = Symbol('virtualState');
 const COMPONENTS = ['_subject', '_predicate', '_object', '_graph'];
+const TERM_CACHE_SIZE = 256;
 const FROZEN_COMPONENTS = new WeakMap();
 
 const TERM_ACCESSORS = {
@@ -18,8 +20,6 @@ const TERM_ACCESSORS = {
 };
 
 function expandComposite(instance) {
-  if (instance._subject !== null)
-    return undefined;
   const parts = instance[SCOPE]._registry._entities[instance[NUMERIC_ID]].split('.');
   const components = [
     Number(parts[1]),
@@ -41,8 +41,15 @@ function expandComposite(instance) {
 }
 
 function getComponent(instance, index) {
-  let components = FROZEN_COMPONENTS.get(instance) || expandComposite(instance);
-  const property = COMPONENTS[index], component = components ? components[index] : instance[property];
+  const property = COMPONENTS[index];
+  let component = instance[property];
+  if (component !== null && typeof component === 'object')
+    return component;
+
+  let components = FROZEN_COMPONENTS.get(instance);
+  if (!components && component === null)
+    components = expandComposite(instance);
+  component = components ? components[index] : instance[property];
   if (typeof component !== 'number')
     return component;
   const term = virtualTermFromNumericId(component, instance[SCOPE]);
@@ -63,28 +70,16 @@ function getComponent(instance, index) {
   return term;
 }
 
-function hiddenValue() {
-  return { configurable: true, value: undefined, writable: true };
-}
-
-const TERM_DESCRIPTORS = {
-  ...Object.getOwnPropertyDescriptors(TERM_ACCESSORS),
-  [NUMERIC_ID]: hiddenValue(),
-  [SCOPE]: hiddenValue(),
-};
-const QUAD_SCOPE_DESCRIPTOR = hiddenValue();
-const QUAD_NUMERIC_ID_DESCRIPTOR = hiddenValue();
+const TERM_ACCESSOR_DESCRIPTORS = Object.getOwnPropertyDescriptors(TERM_ACCESSORS);
+const NUMERIC_ID_DESCRIPTOR = { configurable: true, value: undefined };
 
 export class VirtualQuad extends Quad {
-  constructor(subject, predicate, object, graph, scope, numericId) {
+  constructor(subject, predicate, object, graph, numericId) {
     super(subject, predicate, object, graph);
-    QUAD_SCOPE_DESCRIPTOR.value = scope;
-    Object.defineProperty(this, SCOPE, QUAD_SCOPE_DESCRIPTOR);
-    QUAD_SCOPE_DESCRIPTOR.value = undefined;
     if (numericId !== undefined) {
-      QUAD_NUMERIC_ID_DESCRIPTOR.value = numericId;
-      Object.defineProperty(this, NUMERIC_ID, QUAD_NUMERIC_ID_DESCRIPTOR);
-      QUAD_NUMERIC_ID_DESCRIPTOR.value = undefined;
+      NUMERIC_ID_DESCRIPTOR.value = numericId;
+      Object.defineProperty(this, NUMERIC_ID, NUMERIC_ID_DESCRIPTOR);
+      NUMERIC_ID_DESCRIPTOR.value = undefined;
     }
   }
 
@@ -111,22 +106,42 @@ export class VirtualQuad extends Quad {
   }
 }
 
-// Reuse descriptor objects so an emitted term is the only per-result allocation.
-// Construction is synchronous; clear scope values afterwards to avoid retaining a store.
-function setDescriptorValue(descriptors, property, value) {
-  descriptors[property].value = value;
+function getVirtualState(scope) {
+  let state = scope[VIRTUAL_STATE];
+  if (state)
+    return state;
+
+  class ScopedVirtualQuad extends VirtualQuad {}
+  Object.defineProperties(ScopedVirtualQuad.prototype, {
+    constructor: { value: VirtualQuad },
+    [SCOPE]: { value: scope },
+  });
+  state = { Quad: ScopedVirtualQuad, terms: new Map(), cache: undefined };
+  Object.defineProperty(scope, VIRTUAL_STATE, { value: state });
+  return state;
 }
 
 function createVirtualTerm(prototype, numericId, scope) {
-  setDescriptorValue(TERM_DESCRIPTORS, NUMERIC_ID, numericId);
-  setDescriptorValue(TERM_DESCRIPTORS, SCOPE, scope);
-  const term = Object.create(prototype, TERM_DESCRIPTORS);
-  setDescriptorValue(TERM_DESCRIPTORS, SCOPE, undefined);
+  const state = getVirtualState(scope);
+  let scopedPrototype = state.terms.get(prototype);
+  if (!scopedPrototype) {
+    scopedPrototype = Object.create(prototype, {
+      [SCOPE]: { value: scope },
+    });
+    state.terms.set(prototype, scopedPrototype);
+  }
+  NUMERIC_ID_DESCRIPTOR.value = numericId;
+  const term = Object.create(scopedPrototype, {
+    ...TERM_ACCESSOR_DESCRIPTORS,
+    [NUMERIC_ID]: NUMERIC_ID_DESCRIPTOR,
+  });
+  NUMERIC_ID_DESCRIPTOR.value = undefined;
   return term;
 }
 
 function createVirtualQuad(subject, predicate, object, graph, scope, numericId) {
-  return new VirtualQuad(subject, predicate, object, graph, scope, numericId);
+  const ScopedVirtualQuad = getVirtualState(scope).Quad;
+  return new ScopedVirtualQuad(subject, predicate, object, graph, numericId);
 }
 
 export function virtualTermFromNumericId(numericId, scope) {
@@ -134,14 +149,24 @@ export function virtualTermFromNumericId(numericId, scope) {
   if (numericId === 1)
     return scope._factory.defaultGraph();
 
+  const state = getVirtualState(scope);
+  // A direct-mapped cache bounds retained terms without LRU bookkeeping.
+  const cacheIndex = numericId % TERM_CACHE_SIZE;
+  const cached = state.cache?.[cacheIndex];
+  if (cached?.[NUMERIC_ID] === numericId)
+    return cached;
+
   const id = scope._registry._entities[numericId];
+  let term;
   switch (id[0]) {
-  case '?': return createVirtualTerm(Variable.prototype, numericId, scope);
-  case '_': return createVirtualTerm(BlankNode.prototype, numericId, scope);
-  case '"': return createVirtualTerm(Literal.prototype, numericId, scope);
-  case '.': return createVirtualQuad(null, null, null, null, scope, numericId);
-  default:  return createVirtualTerm(NamedNode.prototype, numericId, scope);
+  case '?': term = createVirtualTerm(Variable.prototype, numericId, scope); break;
+  case '_': term = createVirtualTerm(BlankNode.prototype, numericId, scope); break;
+  case '"': term = createVirtualTerm(Literal.prototype, numericId, scope); break;
+  case '.': term = createVirtualQuad(null, null, null, null, scope, numericId); break;
+  default:  term = createVirtualTerm(NamedNode.prototype, numericId, scope);
   }
+  (state.cache ??= [])[cacheIndex] = term;
+  return term;
 }
 
 export function virtualQuadFromNumericIds(subject, predicate, object, graph, scope) {

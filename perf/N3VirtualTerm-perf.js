@@ -46,6 +46,9 @@ function enumerate(store, mode) {
       break;
     case 'selectedValues': checksum += quad.subject.value.length + quad.object.value.length;
       break;
+    case 'repeatedValues': checksum += quad.subject.value.length + quad.subject.value.length +
+        quad.object.value.length + quad.object.value.length;
+      break;
     case 'allValues': checksum += N3.termToId(quad).length;
       break;
     }
@@ -62,7 +65,7 @@ function compareEnumeration() {
     virtual: createStore(true),
   };
   const result = {};
-  for (const mode of ['iterate', 'termType', 'selectedValues', 'allValues']) {
+  for (const mode of ['iterate', 'termType', 'selectedValues', 'repeatedValues', 'allValues']) {
     enumerate(stores.eager, mode);
     enumerate(stores.virtual, mode);
     const measurements = { eager: [], virtual: [] };

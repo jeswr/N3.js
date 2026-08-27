@@ -1878,6 +1878,26 @@ describe('Store', () => {
       expect(() => { result.subject = namedNode('changed'); }).toThrow(TypeError);
     });
 
+    it('should reuse virtual terms and prototypes only within their entity scope', () => {
+      const store = new Store([
+        quad(namedNode('left'), namedNode('predicate'), namedNode('object')),
+        quad(namedNode('right'), namedNode('predicate'), namedNode('object')),
+      ]);
+      const [left, right] = store.getQuads();
+
+      expect(Object.getPrototypeOf(left)).toBe(Object.getPrototypeOf(right));
+      expect(Object.getPrototypeOf(left.subject)).toBe(Object.getPrototypeOf(right.subject));
+      expect(left.predicate).toBe(right.predicate);
+
+      const [isolated] = new Store([
+        quad(namedNode('left'), namedNode('predicate'), namedNode('object')),
+      ]).getQuads();
+      expect(Object.getPrototypeOf(isolated)).not.toBe(Object.getPrototypeOf(left));
+      expect(Object.getPrototypeOf(isolated.subject))
+        .not.toBe(Object.getPrototypeOf(left.subject));
+      expect(isolated.predicate).not.toBe(left.predicate);
+    });
+
     it('should cache components read after a virtual quad is frozen', () => {
       const store = new Store([
         quad(namedNode('subject'), namedNode('predicate'), namedNode('object')),
