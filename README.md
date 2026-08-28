@@ -423,6 +423,13 @@ Released identifiers are not retained in a free list; they become allocation can
 Every `EntityIndex` created by that module uses the same registry; the registry cannot be replaced or isolated.
 Separately loaded copies of N3.js retain separate registries so different package versions do not share private encodings.
 
+With the default data factory, store lookup and iteration methods emit virtual quads backed by numeric registry identifiers.
+A `VirtualQuad` class, rather than a JavaScript `Proxy`, stores the four numeric component identifiers directly and exposes shared prototype getters for subject, predicate, object, and graph.
+Each untouched virtual quad is a single object with no auxiliary state object or component array; a getter creates and caches its component term only when read.
+Virtual quads and their lazily created component terms expose no setters and are read-only through their public term properties.
+Component terms expose `id` through their prototype; own-property reflection, structural cloning, and structural equality are not part of the virtual-term contract, so use RDF/JS accessors, `equals`, or `toJSON` instead.
+An emitted virtual term keeps its originating entity scope alive so its identifier remains valid, while stores configured with a custom data factory continue to create that factory's terms eagerly.
+
 Operations that enumerate their output, such as `filter` and `map`, create an independent scope containing only the output entities.
 Operations that copy aligned indexes, such as `match`, `intersection`, and `difference`, select a scope based on entity cardinality: sparse and empty results retain only their own entities, while dense results share their source scope to avoid a full extra scan.
 Importing another store likewise retains only entities referenced by the imported graph, rather than everything owned by its scope.
