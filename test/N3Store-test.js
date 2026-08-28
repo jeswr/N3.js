@@ -15,7 +15,7 @@ import {
   Variable,
 } from '../src/N3DataFactory';
 import namespaces from '../src/IRIs';
-import { VirtualQuad } from '../src/N3VirtualTerm';
+import { VirtualQuad, VirtualTerm } from '../src/N3VirtualTerm';
 import { Readable } from 'readable-stream';
 import { arrayifyStream } from 'arrayify-stream';
 
@@ -1776,9 +1776,9 @@ describe('Store', () => {
     const factory = {};
     let store;
     beforeAll(() => {
-      factory.quad = function (s, p, o, g) { return { s: s, p: p, o: o, g: g }; };
+      factory.quad = jest.fn((s, p, o, g) => ({ s: s, p: p, o: o, g: g }));
       ['namedNode', 'blankNode', 'literal', 'variable', 'defaultGraph'].forEach(f => {
-        factory[f] = function (n) { return n ? `${f[0]}-${n}` : f; };
+        factory[f] = jest.fn(n => n ? `${f[0]}-${n}` : f);
       });
 
       store = new Store({ factory: factory });
@@ -1798,21 +1798,21 @@ describe('Store', () => {
       )).toBe(true);
     });
 
-    it('should use the factory when returning quads', () => {
-      expect(store.getQuads()).toEqual([
-        { s: 'n-s1', p: 'n-p1', o: 'n-o1', g: 'defaultGraph' },
-        { s: 'n-s1', p: 'n-p1', o: 'n-o2', g: 'defaultGraph' },
-        { s: 'n-s1', p: 'n-p2', o: 'n-o2', g: 'defaultGraph' },
-        { s: 'n-s2', p: 'n-p1', o: 'n-o1', g: 'defaultGraph' },
-        {
-          s: { s: 'n-qs', p: 'n-qp', o: 'n-qo', g: 'n-qg' },
-          p: 'n-p1',
-          o: 'n-o1',
-          g: 'defaultGraph',
-        },
-        { s: 'n-s1', p: 'n-p1', o: 'n-o1', g: 'n-c4'         },
+    it('should emit virtual quads without using the factory', () => {
+      const results = store.getQuads();
+      expect(results.map(term => termToId(term))).toEqual([
+        '["s1","p1","o1"]',
+        '["s1","p1","o2"]',
+        '["s1","p2","o2"]',
+        '["s2","p1","o1"]',
+        '[["qs","qp","qo","qg"],"p1","o1"]',
+        '["s1","p1","o1","c4"]',
       ]);
-      expect(store._termFromNumericId(store._termToNumericId('c4'))).toBe('n-c4');
+      expect(results.every(result => result instanceof VirtualQuad)).toBe(true);
+      expect(store._termFromNumericId(store._termToNumericId('c4')).value).toBe('c4');
+      expect(factory.quad).not.toHaveBeenCalled();
+      for (const name of ['namedNode', 'blankNode', 'literal', 'variable', 'defaultGraph'])
+        expect(factory[name]).not.toHaveBeenCalled();
     });
   });
 
@@ -1827,7 +1827,7 @@ describe('Store', () => {
       const store = new Store([source]);
       const [result] = store.getQuads();
 
-      expect(result).toBeInstanceOf(Quad);
+      expect(result).not.toBeInstanceOf(Quad);
       expect(result).toBeInstanceOf(VirtualQuad);
       expect(result.constructor).toBe(VirtualQuad);
       const hiddenValues = Object.getOwnPropertySymbols(result).map(symbol => result[symbol]);
@@ -1844,10 +1844,11 @@ describe('Store', () => {
       }
 
       const subject = result.subject;
-      expect(subject).toBeInstanceOf(BlankNode);
-      expect(subject.constructor).toBe(BlankNode);
+      expect(subject).toBeInstanceOf(VirtualTerm);
+      expect(subject).not.toBeInstanceOf(BlankNode);
+      expect(subject.constructor).toBe(VirtualTerm);
       expect(Object.keys(subject)).toEqual([]);
-      const idDescriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(subject), 'id');
+      const idDescriptor = Object.getOwnPropertyDescriptor(VirtualTerm.prototype, 'id');
       expect(idDescriptor.get).toBeInstanceOf(Function);
       expect(idDescriptor.set).toBeUndefined();
       expect(subject.termType).toBe('BlankNode');
@@ -1865,19 +1866,26 @@ describe('Store', () => {
       expect(() => { subject.id = '_:changed'; }).toThrow(TypeError);
       expect(store._termToNumericId(subject)).toBe(store._termToNumericId(source.subject));
 
-      expect(result.predicate).toBeInstanceOf(Variable);
+      expect(result.predicate).toBeInstanceOf(VirtualTerm);
+      expect(result.predicate).not.toBeInstanceOf(Variable);
       expect(result.predicate.value).toBe('predicate');
-      expect(result.object).toBeInstanceOf(Literal);
+      expect(result.object).toBeInstanceOf(VirtualTerm);
+      expect(result.object).not.toBeInstanceOf(Literal);
       expect(result.object.value).toBe('object');
       expect(result.object.language).toBe('');
       expect(result.object.direction).toBe('');
       expect(result.object.datatype).toEqual(namedNode('datatype'));
-      expect(result.graph).toBeInstanceOf(NamedNode);
+      expect(result.graph).toBeInstanceOf(VirtualTerm);
+      expect(result.graph).not.toBeInstanceOf(NamedNode);
       expect(result.equals(source)).toBe(true);
       expect(result.toJSON()).toEqual(source.toJSON());
       expect(() => Object.freeze(result)).not.toThrow();
       expect(result.subject.value).toBe('subject');
       expect(result.id).toBe('');
+      expect(result.value).toBe('');
+      expect(result.hashCode()).toBe(0);
+      expect(subject.hashCode()).toBe(0);
+      expect(subject.equals(null)).toBe(false);
       expect(Object.isFrozen(result)).toBe(true);
       expect(() => { result.subject = namedNode('changed'); }).toThrow(TypeError);
     });
@@ -1912,6 +1920,29 @@ describe('Store', () => {
       const subject = result.subject;
       expect(subject.value).toBe('subject');
       expect(result.subject).toBe(subject);
+    });
+
+    it('should resolve a virtual term after it is frozen', () => {
+      const store = new Store([
+        quad(namedNode('subject'), namedNode('predicate'), namedNode('object')),
+      ]);
+      const [result] = store.getQuads();
+      const subject = result.subject;
+      Object.freeze(subject);
+
+      expect(subject.termType).toBe('NamedNode');
+      expect(subject.value).toBe('subject');
+    });
+
+    it('should resolve a non-extensible virtual term', () => {
+      const store = new Store([
+        quad(namedNode('subject'), namedNode('predicate'), namedNode('object')),
+      ]);
+      const [result] = store.getQuads();
+      const subject = result.subject;
+      Object.preventExtensions(subject);
+
+      expect(subject.value).toBe('subject');
     });
 
     it('should cache nested components read after a virtual quad is frozen', () => {
@@ -1969,10 +2000,12 @@ describe('Store', () => {
         const [result] = store.getQuads();
         expect(result.termType).toBe('Quad');
         expect(reads).toBe(0);
-        expect(result.subject.termType).toBe('NamedNode');
+        const subject = result.subject;
+        expect(reads).toBe(0);
+        expect(subject.termType).toBe('NamedNode');
         expect(reads).toBe(1);
-        expect(result.subject.value).toBe('lazy-subject');
-        expect(reads).toBe(2);
+        expect(subject.value).toBe('lazy-subject');
+        expect(reads).toBe(1);
       }
       finally {
         Object.defineProperty(entityRegistry._entities, subjectId, descriptor);
@@ -1986,14 +2019,18 @@ describe('Store', () => {
       const [result] = store.getQuads();
       const virtualQuoted = result.subject;
 
-      expect(virtualQuoted).toBeInstanceOf(Quad);
-      expect(virtualQuoted).toBeInstanceOf(VirtualQuad);
-      expect(Object.getOwnPropertyDescriptor(VirtualQuad.prototype, 'subject').get)
+      expect(virtualQuoted).not.toBeInstanceOf(Quad);
+      expect(virtualQuoted).toBeInstanceOf(VirtualTerm);
+      expect(virtualQuoted.id).toBe('');
+      expect(Object.getOwnPropertyDescriptor(VirtualTerm.prototype, 'subject').get)
         .toBeInstanceOf(Function);
       expect(virtualQuoted.subject.value).toBe('quoted-s');
+      expect(virtualQuoted.value).toBe('');
       expect(virtualQuoted.predicate.value).toBe('quoted-p');
       expect(virtualQuoted.object.value).toBe('quoted-o');
-      expect(virtualQuoted.graph).toBeInstanceOf(DefaultGraph);
+      expect(virtualQuoted.graph).toBeInstanceOf(VirtualTerm);
+      expect(virtualQuoted.graph).not.toBeInstanceOf(DefaultGraph);
+      expect(virtualQuoted.graph.equals(new DefaultGraph())).toBe(true);
       expect(virtualQuoted.equals(quoted)).toBe(true);
       expect(() => Object.freeze(virtualQuoted)).not.toThrow();
       expect(store._termToNumericId(virtualQuoted)).toBe(store._termToNumericId(quoted));
@@ -3457,7 +3494,7 @@ describe('shared entity registry', () => {
     expect(store.extractLists()).toEqual({ b0: [namedNode('item')] });
   });
 
-  it('should retain imported entities in the target factory', () => {
+  it('should retain imported entities without materializing target factory terms', () => {
     const sourceQuad = quad(namedNode('s'), namedNode('p'), namedNode('o'));
     const source = new Store([sourceQuad]);
     const factory = {
@@ -3470,8 +3507,8 @@ describe('shared entity registry', () => {
     target.addAll(source);
 
     expect(target.getQuads()).toEqual([sourceQuad]);
-    expect(factory.namedNode).toHaveBeenCalledTimes(3);
-    expect(factory.quad).toHaveBeenCalledTimes(1);
+    expect(factory.namedNode).not.toHaveBeenCalled();
+    expect(factory.quad).not.toHaveBeenCalled();
   });
 
   it('should keep blank node allocation local to each entity index', () => {
