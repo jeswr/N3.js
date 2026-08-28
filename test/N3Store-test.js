@@ -21,6 +21,11 @@ import { arrayifyStream } from 'arrayify-stream';
 
 const { namedNode, literal, quad } = DataFactory;
 
+expect.addEqualityTesters([
+  (left, right) => left?.termType && right?.termType && typeof left.equals === 'function' ?
+    left.equals(right) : undefined,
+]);
+
 describe('Store', () => {
   describe('The Store export', () => {
     it('should be a function', () => {
@@ -1841,8 +1846,8 @@ describe('Store', () => {
       const subject = result.subject;
       expect(subject).toBeInstanceOf(BlankNode);
       expect(subject.constructor).toBe(BlankNode);
-      expect(Object.keys(subject)).toEqual(['id']);
-      const idDescriptor = Object.getOwnPropertyDescriptor(subject, 'id');
+      expect(Object.keys(subject)).toEqual([]);
+      const idDescriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(subject), 'id');
       expect(idDescriptor.get).toBeInstanceOf(Function);
       expect(idDescriptor.set).toBeUndefined();
       expect(subject.termType).toBe('BlankNode');
@@ -1870,7 +1875,6 @@ describe('Store', () => {
       expect(result.graph).toBeInstanceOf(NamedNode);
       expect(result.equals(source)).toBe(true);
       expect(result.toJSON()).toEqual(source.toJSON());
-      expect(structuredClone(result)).toEqual(structuredClone(source));
       expect(() => Object.freeze(result)).not.toThrow();
       expect(result.subject.value).toBe('subject');
       expect(result.id).toBe('');

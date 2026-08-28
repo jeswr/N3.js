@@ -116,27 +116,26 @@ function getVirtualState(scope) {
     constructor: { value: VirtualQuad },
     [SCOPE]: { value: scope },
   });
-  state = { Quad: ScopedVirtualQuad, terms: new Map(), cache: undefined };
+  state = { Quad: ScopedVirtualQuad, termConstructors: new Map(), cache: undefined };
   Object.defineProperty(scope, VIRTUAL_STATE, { value: state });
   return state;
 }
 
 function createVirtualTerm(prototype, numericId, scope) {
   const state = getVirtualState(scope);
-  let scopedPrototype = state.terms.get(prototype);
-  if (!scopedPrototype) {
-    scopedPrototype = Object.create(prototype, {
+  let ScopedVirtualTerm = state.termConstructors.get(prototype);
+  if (!ScopedVirtualTerm) {
+    // Keep instance creation on the constructor fast path.
+    ScopedVirtualTerm = function (id) {
+      this[NUMERIC_ID] = id;
+    };
+    ScopedVirtualTerm.prototype = Object.create(prototype, {
+      ...TERM_ACCESSOR_DESCRIPTORS,
       [SCOPE]: { value: scope },
     });
-    state.terms.set(prototype, scopedPrototype);
+    state.termConstructors.set(prototype, ScopedVirtualTerm);
   }
-  NUMERIC_ID_DESCRIPTOR.value = numericId;
-  const term = Object.create(scopedPrototype, {
-    ...TERM_ACCESSOR_DESCRIPTORS,
-    [NUMERIC_ID]: NUMERIC_ID_DESCRIPTOR,
-  });
-  NUMERIC_ID_DESCRIPTOR.value = undefined;
-  return term;
+  return new ScopedVirtualTerm(numericId);
 }
 
 function createVirtualQuad(subject, predicate, object, graph, scope, numericId) {

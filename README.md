@@ -427,6 +427,7 @@ With the default data factory, store lookup and iteration methods emit virtual q
 A `VirtualQuad` class, rather than a JavaScript `Proxy`, stores the four numeric component identifiers directly and exposes shared prototype getters for subject, predicate, object, and graph.
 Each untouched virtual quad is a single object with no auxiliary state object or component array; a getter creates and caches its component term only when read.
 Virtual quads and their lazily created component terms expose no setters and are read-only through their public term properties.
+Component terms expose `id` through their prototype; own-property reflection, structural cloning, and structural equality are not part of the virtual-term contract, so use RDF/JS accessors, `equals`, or `toJSON` instead.
 An emitted virtual term keeps its originating entity scope alive so its identifier remains valid, while stores configured with a custom data factory continue to create that factory's terms eagerly.
 
 Operations that enumerate their output, such as `filter` and `map`, create an independent scope containing only the output entities.
