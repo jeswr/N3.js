@@ -60,8 +60,6 @@ export function quadRanges(quad) {
 }
 
 function clearToken(term) {
-  if (!term || typeof term !== 'object')
-    return;
   term[TERM_TOKEN] = undefined;
   if (term.termType === 'Quad') {
     clearToken(term.subject);
@@ -72,9 +70,9 @@ function clearToken(term) {
 }
 
 class QuadLocationParser extends N3Parser {
-  constructor(input, options = {}) {
-    const onLocation = options.onLocation || null;
-    const parserOptions = { ...options, onQuadSpans() {} };
+  constructor(input, options) {
+    const onLocation = options.onLocation;
+    const parserOptions = { ...options, _trackOffsets: true };
     delete parserOptions.onLocation;
     super(parserOptions);
     this._onQuadSpans = null;
@@ -84,14 +82,12 @@ class QuadLocationParser extends N3Parser {
   }
 
   _noteSpan(term, token) {
-    if (term && token && typeof term === 'object')
-      term[TERM_TOKEN] = token;
+    term[TERM_TOKEN] = token;
     return term;
   }
 
   _noteLiteralSpan(literal) {
-    if (this._literalSpan)
-      literal[TERM_TOKEN] = this._literalSpan;
+    literal[TERM_TOKEN] = this._literalSpan;
     return literal;
   }
 
@@ -104,8 +100,7 @@ class QuadLocationParser extends N3Parser {
     writeToken(this._inputDocument, row, 6, object && object[TERM_TOKEN]);
     writeToken(this._inputDocument, row, 9, graph && graph[TERM_TOKEN]);
     quad[QUAD_RANGES] = row;
-    if (this._onLocation)
-      this._onLocation(quad);
+    this._onLocation(quad);
     this._callback(null, quad);
   }
 }

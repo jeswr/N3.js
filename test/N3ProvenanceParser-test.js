@@ -21,6 +21,14 @@ describe('ProvenanceParser', () => {
       expect(utts[0].subject[0].start).not.toBe(utts[1].subject[0].start);
     });
 
+    it('stores a compact list after the second duplicate utterance', () => {
+      const doc = '<s> <p> <o> .\n<s> <p> <o> .\n<s> <p> <o> .';
+      const { quads, provenance } = parse(doc);
+      expect(provenance.get(quads[0])).toHaveLength(3);
+      expect(provenance.utteranceCount).toBe(3);
+      expect([...provenance][0]).toHaveLength(3);
+    });
+
     it('reuses the subject span across a predicateObjectList', () => {
       const doc = '<s> <p1> <o1> ;\n    <p2> <o2> .';
       const { quads, provenance } = parse(doc);
@@ -145,6 +153,23 @@ describe('ProvenanceParser', () => {
       expect(() => termKey({ termType: 'Unheard' })).toThrow(/unknown termType/);
     });
 
+    it('keys every supported RDF/JS term shape', () => {
+      expect(termKey(DataFactory.namedNode('urn:n'))).toBe('<urn:n>');
+      expect(termKey(DataFactory.blankNode('b'))).toBe('_:b');
+      expect(termKey(DataFactory.literal('plain'))).toBe('"plain"');
+      expect(termKey(DataFactory.literal('hello', 'en'))).toBe('"hello"@en');
+      expect(termKey(DataFactory.literal('hello', { language: 'en', direction: 'ltr' })))
+        .toBe('"hello"@en--ltr');
+      expect(termKey(DataFactory.literal('1', DataFactory.namedNode('urn:type'))))
+        .toBe('"1"^^<urn:type>');
+      expect(termKey(DataFactory.literal('\\"\n\r'))).toBe('"\\\\\\"\\n\\r"');
+      expect(termKey(DataFactory.quad(
+        DataFactory.namedNode('urn:s'),
+        DataFactory.namedNode('urn:p'),
+        DataFactory.namedNode('urn:o'),
+      ))).toBe('<<(<urn:s> <urn:p> <urn:o>)>>');
+    });
+
     it('gives rdf:nil subjects (empty collection) no span', () => {
       const doc = '() <p> <o> .';
       const { quads, provenance } = parse(doc);
@@ -168,6 +193,32 @@ describe('ProvenanceParser', () => {
   });
 
   describe('the onQuadSpans option', () => {
+    it('reports source spans directly from the base parser', () => {
+      const events = [];
+      new Parser({
+        baseIRI: BASE_IRI,
+        onQuadSpans(quad, spans) { events.push({ quad, spans }); },
+      }).parse('<s> <p> "value" .');
+      expect(events).toHaveLength(1);
+      expect(events[0].spans).toMatchObject({
+        subject: { start: 0, end: 4, line: 1 },
+        predicate: { start: 4, end: 8, line: 1 },
+        object: { start: 8, end: 15, line: 1 },
+        graph: null,
+      });
+
+      const synthetic = [];
+      new Parser({ onQuadSpans(quad, spans) { synthetic.push(spans); } }).parse('() a () .');
+      expect(synthetic[0]).toEqual({ subject: null, predicate: null, object: null, graph: null });
+
+      const namedGraph = [];
+      new Parser({
+        format: 'application/trig',
+        onQuadSpans(quad, spans) { namedGraph.push(spans); },
+      }).parse('<g> { <s> <p> <o> }');
+      expect(namedGraph[0].graph).toMatchObject({ start: 0, end: 4, line: 1 });
+    });
+
     it('does not change what the parser emits', () => {
       const doc = '@prefix ex: <http://ex.example/>.\nex:s ex:p [ ex:q (1 2) ], "x"@en--ltr .';
       // anonymous blank node labels come from a global counter, so compare
