@@ -15,6 +15,12 @@ export default class N3Parser {
     options = options || {};
     this._setBase(options.baseIRI);
     options.factory && initDataFactory(this, options.factory);
+    // Opt-in source-span tracking: after each emitted quad, invoke
+    // onQuadSpans(quad, {subject, predicate, object, graph}) with the
+    // lexer's {line, start, end} for each position's source token (null for
+    // synthetic terms without one).  Zero cost when the option is absent.
+    this._onQuadSpans = options.onQuadSpans || null;
+    this._termSpans = this._onQuadSpans ? new Map() : null;
 
     // Set supported features depending on the format
     const format = (typeof options.format === 'string') ?
@@ -39,7 +45,7 @@ export default class N3Parser {
       this._resolveRelativeIRI = iri => { return null; };
     this._blankNodePrefix = typeof options.blankNodePrefix !== 'string' ? '' :
                               options.blankNodePrefix.replace(/^(?!_:)/, '_:');
-    this._lexer = options.lexer || new N3Lexer({ lineMode: isLineMode, n3: isN3, isImpliedBy: this._isImpliedBy });
+    this._lexer = options.lexer || new N3Lexer({ lineMode: isLineMode, n3: isN3, isImpliedBy: this._isImpliedBy, trackOffsets: !!options.onQuadSpans });
     // Disable explicit quantifiers by default
     this._explicitQuantifiers = !!options.explicitQuantifiers;
     // Disable parsing of unsupported versions by default
@@ -249,7 +255,7 @@ export default class N3Parser {
     // In N3 mode, replace the entity if it is quantified
     if (!quantifier && this._n3Mode && (value.id in this._quantified))
       value = this._quantified[value.id];
-    return value;
+    return this._noteSpan(value, token);
   }
 
   // ### `_readList` starts reading a list in the subject, predicate, or object position
@@ -274,7 +280,7 @@ export default class N3Parser {
     case '[':
       // Start a new quad with a new blank node as subject
       this._saveContext('blank', this._graph,
-                        this._subject = this._factory.blankNode(), null, null);
+                        this._subject = this._noteSpan(this._factory.blankNode(), token), null, null);
       return this._readBlankNodeHead;
     case '(':
       return this._readList(token, this.RDF_NIL, null, null);
@@ -283,7 +289,7 @@ export default class N3Parser {
       if (!this._n3Mode)
         return this._error('Unexpected graph', token);
       this._saveContext('formula', this._graph,
-                        this._graph = this._factory.blankNode(), null, null);
+                        this._graph = this._noteSpan(this._factory.blankNode(), token), null, null);
       return this._readInFormulaContext;
     case '}':
        // No subject; the graph in which we are reading is closed instead
@@ -308,10 +314,11 @@ export default class N3Parser {
 
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
+        if (this._termSpans !== null) this._literalSpan = token;
         return this._completeSubjectLiteral;
       }
       else {
-        this._subject = this._factory.literal(token.value, this._factory.namedNode(token.prefix));
+        this._subject = this._noteSpan(this._factory.literal(token.value, this._factory.namedNode(token.prefix)), token);
         // This branch is N3-only, so the literal subject might start a path
         return this._getPathReader(this._readPredicateOrNamedGraph);
       }
@@ -378,10 +385,11 @@ export default class N3Parser {
 
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
+        if (this._termSpans !== null) this._literalSpan = token;
         return this._completePredicateLiteral;
       }
       else
-        this._predicate = this._factory.literal(token.value, this._factory.namedNode(token.prefix));
+        this._predicate = this._noteSpan(this._factory.literal(token.value, this._factory.namedNode(token.prefix)), token);
 
       pathable = true;
       break;
@@ -394,7 +402,7 @@ export default class N3Parser {
       if (this._n3Mode) {
         // Start a new quad with a new blank node as subject
         this._saveContext('blank', this._graph, this._subject,
-                          this._subject = this._factory.blankNode(), null);
+                          this._subject = this._noteSpan(this._factory.blankNode(), token), null);
         return this._readBlankNodeHead;
       }
       return this._error('Disallowed blank node as predicate', token);
@@ -440,11 +448,12 @@ export default class N3Parser {
       // Regular literal, can still get a datatype or language
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
+        if (this._termSpans !== null) this._literalSpan = token;
         return this._readDataTypeOrLang;
       }
       // Pre-datatyped string literal (prefix stores the datatype)
       else {
-        this._object = this._factory.literal(token.value, this._factory.namedNode(token.prefix));
+        this._object = this._noteSpan(this._factory.literal(token.value, this._factory.namedNode(token.prefix)), token);
         // In N3 mode, the literal object might start a path
         if (this._n3Mode)
           return this._getPathReader(this._getContextEndReader());
@@ -453,7 +462,7 @@ export default class N3Parser {
     case '[':
       // Start a new quad with a new blank node as subject
       this._saveContext('blank', this._graph, this._subject, this._predicate,
-                        this._subject = this._factory.blankNode());
+                        this._subject = this._noteSpan(this._factory.blankNode(), token));
       return this._readBlankNodeHead;
     case '(':
       return this._readList(token, this._subject, this._predicate, this.RDF_NIL);
@@ -462,7 +471,7 @@ export default class N3Parser {
       if (!this._n3Mode)
         return this._error('Unexpected graph', token);
       this._saveContext('formula', this._graph, this._subject, this._predicate,
-                        this._graph = this._factory.blankNode());
+                        this._graph = this._noteSpan(this._factory.blankNode(), token));
       return this._readInFormulaContext;
     case '<<(':
       this._saveContext('<<(', this._graph, this._subject, this._predicate, null);
@@ -593,14 +602,14 @@ export default class N3Parser {
     case '[':
       // Stack the current list quad and start a new quad with a blank node as subject
       this._saveContext('blank', this._graph,
-                        list = this._factory.blankNode(), this.RDF_FIRST,
-                        this._subject = item = this._factory.blankNode());
+                        list = this._noteSpan(this._factory.blankNode(), token), this.RDF_FIRST,
+                        this._subject = item = this._noteSpan(this._factory.blankNode(), token));
       next = this._readBlankNodeHead;
       break;
     case '(':
       // Stack the current list quad and start a new list
       this._saveContext('list', this._graph,
-                        list = this._factory.blankNode(), this.RDF_FIRST, this.RDF_NIL);
+                        list = this._noteSpan(this._factory.blankNode(), token), this.RDF_FIRST, this.RDF_NIL);
       this._subject = null;
       break;
     case ')':
@@ -655,11 +664,12 @@ export default class N3Parser {
       // Regular literal, can still get a datatype or language
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
+        if (this._termSpans !== null) this._literalSpan = token;
         next = this._readListItemDataTypeOrLang;
       }
       // Pre-datatyped string literal (prefix stores the datatype)
       else {
-        item = this._factory.literal(token.value, this._factory.namedNode(token.prefix));
+        item = this._noteSpan(this._factory.literal(token.value, this._factory.namedNode(token.prefix)), token);
         next = this._getContextEndReader();
       }
       break;
@@ -669,8 +679,8 @@ export default class N3Parser {
         return this._error('Unexpected graph', token);
       // The formula is an item of the list,
       // so it must be linked in the list's graph before the graph changes
-      list = this._factory.blankNode();
-      item = this._factory.blankNode();
+      list = this._noteSpan(this._factory.blankNode(), token);
+      item = this._noteSpan(this._factory.blankNode(), token);
       // Is this the first element of the list?
       if (previousList === null) {
         // This list is either the subject or the object of its parent
@@ -707,7 +717,7 @@ export default class N3Parser {
 
      // Create a new blank node if no item head was assigned yet
     if (list === null)
-      this._subject = list = this._factory.blankNode();
+      this._subject = list = this._noteSpan(this._factory.blankNode(), token);
 
     // When reading a reified triple or triple term, store the list as subject in the stack, as this will be overridden when reading the triple.
     if (token.type === '<<' || token.type === '<<(')
@@ -772,14 +782,14 @@ export default class N3Parser {
       if (datatype.value === namespaces.rdf.langString || datatype.value === namespaces.rdf.dirLangString) {
         return this._error('Detected illegal (directional) languaged-tagged string with explicit datatype', token);
       }
-      literal = this._factory.literal(this._literalValue, datatype);
+      literal = this._noteLiteralSpan(this._factory.literal(this._literalValue, datatype));
       token = null;
       break;
     // Create a language-tagged string
     case 'langcode':
       if (token.value.split('-').some(t => t.length > 8))
         return this._error('Detected language tag with subtag longer than 8 characters', token);
-      literal = this._factory.literal(this._literalValue, token.value);
+      literal = this._noteLiteralSpan(this._factory.literal(this._literalValue, token.value));
       this._literalLanguage = token.value;
       token = null;
       // Save state for a possible direction tag
@@ -788,7 +798,7 @@ export default class N3Parser {
       break;
     // Create a simple string literal by default
     default:
-      literal = this._factory.literal(this._literalValue);
+      literal = this._noteLiteralSpan(this._factory.literal(this._literalValue));
     }
 
     return { token, literal, readCb };
@@ -799,7 +809,7 @@ export default class N3Parser {
     const component = this._literalComponent, listItem = this._literalListItem;
     // Attempt to read a dircode
     if (token.type === 'dircode') {
-      const term = this._factory.literal(this._literalValue, { language: this._literalLanguage, direction: token.value });
+      const term = this._noteLiteralSpan(this._factory.literal(this._literalValue, { language: this._literalLanguage, direction: token.value }));
       if (component === 'subject')
         this._subject = term;
       else if (component === 'predicate')
@@ -1117,7 +1127,7 @@ export default class N3Parser {
   _readNamedGraphBlankLabel(token) {
     if (token.type !== ']')
       return this._error('Invalid graph label', token);
-    this._subject = this._factory.blankNode();
+    this._subject = this._noteSpan(this._factory.blankNode(), token);
     return this._readGraph;
   }
 
@@ -1147,17 +1157,17 @@ export default class N3Parser {
     }
     // Without explicit quantifiers, map entities to a quantified entity
     if (!this._explicitQuantifiers)
-      this._quantified[entity.id] = this._factory[this._quantifier](this._factory.blankNode().value);
+      this._quantified[entity.id] = this._factory[this._quantifier](this._noteSpan(this._factory.blankNode(), token).value);
     // With explicit quantifiers, output the reified quantifier
     else {
       // If this is the first item, start a new quantifier list
       if (this._subject === null)
         this._emit(this._graph || this.DEFAULTGRAPH, this._predicate,
-                   this._subject = this._factory.blankNode(), this.QUANTIFIERS_GRAPH);
+                   this._subject = this._noteSpan(this._factory.blankNode(), token), this.QUANTIFIERS_GRAPH);
       // Otherwise, continue the previous list
       else
         this._emit(this._subject, this.RDF_REST,
-                   this._subject = this._factory.blankNode(), this.QUANTIFIERS_GRAPH);
+                   this._subject = this._noteSpan(this._factory.blankNode(), token), this.QUANTIFIERS_GRAPH);
       // Output the list item
       this._emit(this._subject, this.RDF_FIRST, entity, this.QUANTIFIERS_GRAPH);
     }
@@ -1229,7 +1239,7 @@ export default class N3Parser {
   // ### `_readForwardPath` reads a '!' path
   _readForwardPath(token) {
     let subject, predicate;
-    const object = this._factory.blankNode();
+    const object = this._noteSpan(this._factory.blankNode(), token);
     // The next token is the predicate
     if ((predicate = this._readEntity(token)) === undefined)
       return;
@@ -1247,7 +1257,7 @@ export default class N3Parser {
 
   // ### `_readBackwardPath` reads a '^' path
   _readBackwardPath(token) {
-    const subject = this._factory.blankNode();
+    const subject = this._noteSpan(this._factory.blankNode(), token);
     let predicate, object;
     // The next token is the predicate
     if ((predicate = this._readEntity(token)) === undefined)
@@ -1269,8 +1279,8 @@ export default class N3Parser {
     if (token.type !== ')>>')
       return this._error(`Expected )>> but got ${token.type}`, token);
     // Read the quad and restore the previous context
-    const quad = this._factory.quad(this._subject, this._predicate, this._object,
-        this._graph || this.DEFAULTGRAPH);
+    const quad = this._noteSpan(this._factory.quad(this._subject, this._predicate, this._object,
+        this._graph || this.DEFAULTGRAPH), token);
     this._restoreContext('<<(', token);
 
     // If we're in a list, continue processing that list
@@ -1386,9 +1396,9 @@ export default class N3Parser {
   _readTripleTerm() {
     const stack = this._contextStack, parent = stack.length && stack[stack.length - 1];
     const parentGraph = parent ? parent.graph : undefined;
-    const reifier = this._reifier || this._factory.blankNode();
+    const reifier = this._reifier || this._noteSpan(this._factory.blankNode(), null);
     this._reifier = null;
-    this._tripleTerm = this._tripleTerm || this._factory.quad(this._subject, this._predicate, this._object);
+    this._tripleTerm = this._tripleTerm || this._noteSpan(this._factory.quad(this._subject, this._predicate, this._object), null);
     this._emit(reifier, this.RDF_REIFIES, this._tripleTerm, parentGraph || this._graph || this.DEFAULTGRAPH);
     return reifier;
   }
@@ -1415,7 +1425,24 @@ export default class N3Parser {
 
   // ### `_emit` sends a quad through the callback
   _emit(subject, predicate, object, graph) {
-    this._callback(null, this._factory.quad(subject, predicate, object, graph || this.DEFAULTGRAPH));
+    const quad = this._factory.quad(subject, predicate, object, graph || this.DEFAULTGRAPH);
+    if (this._onQuadSpans)
+      this._onQuadSpans(quad);
+    this._callback(null, quad);
+  }
+
+  // ### `_noteLiteralSpan` records the pending string token's span
+  _noteLiteralSpan(literal) {
+    if (this._termSpans !== null && this._literalSpan)
+      this._termSpans.set(literal, this._literalSpan);
+    return literal;
+  }
+
+  // ### `_noteSpan` records a term's source token span when tracking is on
+  _noteSpan(term, token) {
+    if (this._termSpans !== null && term && token && typeof term === 'object')
+      this._termSpans.set(term, token);
+    return term;
   }
 
   // ### `_error` emits an error message through the callback
