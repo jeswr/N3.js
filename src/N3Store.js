@@ -6,13 +6,27 @@ import { isDefaultGraph } from './N3Util';
 import N3Writer from './N3Writer';
 
 const ITERATOR = Symbol('iter');
+const SIZE = Symbol('size');
+
+function hasInIndex(index0, key0, key1, key2) {
+  const index1 = index0 && index0[key0];
+  const index2 = index1 && index1[key1];
+  return !!index2 && key2 in index2;
+}
 
 function merge(target, source, depth = 4) {
-  if (depth === 0)
-    return Object.assign(target, source);
-
-  for (const key in source)
-    target[key] = merge(target[key] || Object.create(null), source[key], depth - 1);
+  let size = target[SIZE] || 0;
+  for (const key in source) {
+    if (!(key in target)) {
+      size++;
+      target[key] = depth === 0 ? null : merge(Object.create(null), source[key], depth - 1);
+    }
+    else if (depth !== 0)
+      target[key] = merge(target[key], source[key], depth - 1);
+  }
+  // Depth 2 is the level of the `subjects`, `predicates`, and `objects` indexes.
+  if (depth <= 2)
+    target[SIZE] = size;
 
   return target;
 }
@@ -25,7 +39,10 @@ function merge(target, source, depth = 4) {
  * *not* be set as the value for an index.
  */
 function intersect(s1, s2, depth = 4) {
-  let target = false;
+  let target = false, size = 0;
+
+  if (depth <= 2 && s2[SIZE] < s1[SIZE])
+    [s1, s2] = [s2, s1];
 
   for (const key in s1) {
     if (key in s2) {
@@ -33,6 +50,7 @@ function intersect(s1, s2, depth = 4) {
       if (intersection !== false) {
         target = target || Object.create(null);
         target[key] = intersection;
+        size++;
       }
       // Depth 3 is the 'subjects', 'predicates' and 'objects' keys.
       // If the 'subjects' index is empty, so will the 'predicates' and 'objects' index.
@@ -41,6 +59,10 @@ function intersect(s1, s2, depth = 4) {
       }
     }
   }
+
+  // Depth 2 is the level of the `subjects`, `predicates`, and `objects` indexes.
+  if (depth <= 2 && target)
+    target[SIZE] = size;
 
   return target;
 }
@@ -53,7 +75,7 @@ function intersect(s1, s2, depth = 4) {
  * *not* be set as the value for an index.
  */
 function difference(s1, s2, depth = 4) {
-  let target = false;
+  let target = false, size = 0;
 
   for (const key in s1) {
     // When the key is not in the index, then none of the triples defined by s1[key] are
@@ -61,12 +83,14 @@ function difference(s1, s2, depth = 4) {
     if (!(key in s2)) {
       target = target || Object.create(null);
       target[key] = depth === 0 ? null : merge({}, s1[key], depth - 1);
+      size++;
     }
     else if (depth !== 0) {
       const diff = difference(s1[key], s2[key], depth - 1);
       if (diff !== false) {
         target = target || Object.create(null);
         target[key] = diff;
+        size++;
       }
       // Depth 3 is the 'subjects', 'predicates' and 'objects' keys.
       // If the 'subjects' index is empty, so will the 'predicates' and 'objects' index.
@@ -75,6 +99,10 @@ function difference(s1, s2, depth = 4) {
       }
     }
   }
+
+  // Depth 2 is the level of the `subjects`, `predicates`, and `objects` indexes.
+  if (depth <= 2 && target)
+    target[SIZE] = size;
 
   return target;
 }
@@ -194,7 +222,7 @@ export default class N3Store {
     for (const graphKey in graphs)
       for (const subjectKey in (subjects = graphs[graphKey].subjects))
         for (const predicateKey in (subject = subjects[subjectKey]))
-          size += Object.keys(subject[predicateKey]).length;
+          size += subject[predicateKey][SIZE];
     return this._size = size;
   }
 
@@ -203,13 +231,23 @@ export default class N3Store {
   // ### `_addToIndex` adds a quad to a three-layered index.
   // Returns if the index has changed, if the entry did not already exist.
   _addToIndex(index0, key0, key1, key2) {
-    // Create layers as necessary
-    const index1 = index0[key0] || (index0[key0] = {});
-    const index2 = index1[key1] || (index1[key1] = {});
+    // Create layers as necessary, maintaining their entry counters
+    let index1 = index0[key0];
+    if (!index1) {
+      index0[key0] = index1 = { [SIZE]: 0 };
+      index0[SIZE]++;
+    }
+    let index2 = index1[key1];
+    if (!index2) {
+      index1[key1] = index2 = { [SIZE]: 0 };
+      index1[SIZE]++;
+    }
     // Setting the key to _any_ value signals the presence of the quad
     const existed = key2 in index2;
-    if (!existed)
+    if (!existed) {
       index2[key2] = null;
+      index2[SIZE]++;
+    }
     return !existed;
   }
 
@@ -219,44 +257,60 @@ export default class N3Store {
     const index1 = index0[key0], index2 = index1[key1];
     delete index2[key2];
 
-    // Remove intermediary index layers if they are empty
-    for (const key in index2) return;
+    // Remove intermediary index layers if they are empty,
+    // which the entry counters detect in constant time
+    if (--index2[SIZE] !== 0) return;
     delete index1[key1];
-    for (const key in index1) return;
+    if (--index1[SIZE] !== 0) return;
     delete index0[key0];
+    index0[SIZE]--;
   }
 
   // ### `_findInIndex` finds a set of quads in a three-layered index.
   // The index base is `index0` and the keys at each level are `key0`, `key1`, and `key2`.
-  // Any of these keys can be undefined, which is interpreted as a wildcard.
+  // A key and any keys after it can be null or undefined, which is interpreted as a wildcard.
   // `name0`, `name1`, and `name2` are the names of the keys at each level,
   // used when reconstructing the resulting quad
   // (for instance: _subject_, _predicate_, and _object_).
   // Finally, `graphId` will be the graph of the created quads.
   *_findInIndex(index0, key0, key1, key2, name0, name1, name2, graphId) {
-    let tmp, index1, index2;
     const entityKeys = this._entities;
     const graph = this._termFromId(entityKeys[graphId]);
     const parts = { subject: null, predicate: null, object: null };
 
-    // If a key is specified, use only that part of index 0.
-    if (key0) (tmp = index0, index0 = {})[key0] = tmp[key0];
-    for (const value0 in index0) {
-      if (index1 = index0[value0]) {
-        parts[name0] = this._termFromId(entityKeys[value0]);
-        // If a key is specified, use only that part of index 1.
-        if (key1) (tmp = index1, index1 = {})[key1] = tmp[key1];
-        for (const value1 in index1) {
-          if (index2 = index1[value1]) {
-            parts[name1] = this._termFromId(entityKeys[value1]);
-            // If a key is specified, use only that part of index 2, if it exists.
-            const values = key2 ? (key2 in index2 ? [key2] : []) : Object.keys(index2);
-            // Create quads for all items found in index 2.
-            for (let l = 0; l < values.length; l++) {
-              parts[name2] = this._termFromId(entityKeys[values[l]]);
-              yield this._factory.quad(parts.subject, parts.predicate, parts.object, graph);
-            }
-          }
+    // Exact matches avoid allocating key arrays or entering generic loops.
+    if (key2) {
+      const index1 = index0[key0];
+      const index2 = index1 && index1[key1];
+      if (!index2 || !(key2 in index2))
+        return;
+      parts[name0] = this._termFromId(entityKeys[key0]);
+      parts[name1] = this._termFromId(entityKeys[key1]);
+      parts[name2] = this._termFromId(entityKeys[key2]);
+      yield this._factory.quad(parts.subject, parts.predicate, parts.object, graph);
+      return;
+    }
+
+    if (key0 && !(key0 in index0))
+      return;
+    // A null key list stops after visiting a bound key, avoiding a one-item array.
+    const keys0 = key0 ? null : Object.keys(index0);
+    for (let i0 = 0, value0 = key0 || keys0[0]; value0;
+         value0 = keys0 && keys0[++i0]) {
+      const index1 = index0[value0];
+      parts[name0] = this._termFromId(entityKeys[value0]);
+
+      if (key1 && !(key1 in index1))
+        return;
+      const keys1 = key1 ? null : Object.keys(index1);
+      for (let i1 = 0, value1 = key1 || keys1[0]; value1;
+           value1 = keys1 && keys1[++i1]) {
+        const index2 = index1[value1];
+        parts[name1] = this._termFromId(entityKeys[value1]);
+        const values = Object.keys(index2);
+        for (let l = 0; l < values.length; l++) {
+          parts[name2] = this._termFromId(entityKeys[values[l]]);
+          yield this._factory.quad(parts.subject, parts.predicate, parts.object, graph);
         }
       }
     }
@@ -311,25 +365,29 @@ export default class N3Store {
 
   // ### `_countInIndex` counts matching quads in a three-layered index.
   // The index base is `index0` and the keys at each level are `key0`, `key1`, and `key2`.
-  // Any of these keys can be undefined, which is interpreted as a wildcard.
+  // A key and any keys after it can be null or undefined, which is interpreted as a wildcard.
   _countInIndex(index0, key0, key1, key2) {
-    let count = 0, tmp, index1, index2;
+    let count = 0, index1, index2;
 
-    // If a key is specified, count only that part of index 0
-    if (key0) (tmp = index0, index0 = {})[key0] = tmp[key0];
-    for (const value0 in index0) {
-      if (index1 = index0[value0]) {
-        // If a key is specified, count only that part of index 1
-        if (key1) (tmp = index1, index1 = {})[key1] = tmp[key1];
-        for (const value1 in index1) {
-          if (index2 = index1[value1]) {
-            // If a key is specified, count the quad if it exists
-            if (key2) (key2 in index2) && count++;
-            // Otherwise, count all quads
-            else count += Object.keys(index2).length;
-          }
-        }
+    // Bound outer keys can be looked up directly.
+    if (key0) {
+      if (!(index1 = index0[key0]))
+        return 0;
+      if (key1) {
+        if (!(index2 = index1[key1]))
+          return 0;
+        return key2 ? (key2 in index2 ? 1 : 0) : index2[SIZE];
       }
+
+      for (const value1 in index1)
+        count += index1[value1][SIZE];
+      return count;
+    }
+
+    for (const value0 in index0) {
+      index1 = index0[value0];
+      for (const value1 in index1)
+        count += index1[value1][SIZE];
     }
     return count;
   }
@@ -378,7 +436,11 @@ export default class N3Store {
     let graphItem = this._graphs[graph];
     // Create the graph if it doesn't exist yet
     if (!graphItem) {
-      graphItem = this._graphs[graph] = { subjects: {}, predicates: {}, objects: {} };
+      graphItem = this._graphs[graph] = {
+        subjects: { [SIZE]: 0 },
+        predicates: { [SIZE]: 0 },
+        objects: { [SIZE]: 0 },
+      };
       // Freezing a graph helps subsequent `add` performance,
       // and properties will never be modified anyway
       Object.freeze(graphItem);
@@ -418,6 +480,16 @@ export default class N3Store {
   has(subjectOrQuad, predicate, object, graph) {
     if (subjectOrQuad && subjectOrQuad.subject)
       ({ subject: subjectOrQuad, predicate, object, graph } = subjectOrQuad);
+    // Fully bound quads can bypass the generator machinery of `readQuads`.
+    if (subjectOrQuad && predicate && object && graph !== undefined && graph !== null) {
+      const subjectId = this._termToNumericId(subjectOrQuad);
+      const predicateId = this._termToNumericId(predicate);
+      const objectId = this._termToNumericId(object);
+      const graphId = graph === '' || isDefaultGraph(graph) ? 1 : this._termToNumericId(graph);
+      const graphItem = graphId && this._graphs[graphId];
+      return !!subjectId && !!predicateId && !!objectId && !!graphItem &&
+        hasInIndex(graphItem.subjects, subjectId, predicateId, objectId);
+    }
     return !this.readQuads(subjectOrQuad, predicate, object, graph).next().done;
   }
 
@@ -453,8 +525,8 @@ export default class N3Store {
     if (this._size !== null) this._size--;
 
     // Remove the graph if it is empty
-    for (subject in graphItem.subjects) return true;
-    delete graphs[graph];
+    if (graphItem.subjects[SIZE] === 0)
+      delete graphs[graph];
     return true;
   }
 
@@ -1094,10 +1166,9 @@ export default class N3Store {
   }
 
   // ### Store is an iterable.
-  // Can be used where iterables are expected: for...of loops, array spread operator,
-  // `yield*`, and destructuring assignment (order is not guaranteed).
-  *[Symbol.iterator]() {
-    yield* this.readQuads();
+  // Returns the quad iterator directly; order is not guaranteed.
+  [Symbol.iterator]() {
+    return this.readQuads();
   }
 }
 
@@ -1114,15 +1185,18 @@ function indexMatch(index, ids, depth = 0) {
   if (ind && !(ind in index))
     return false;
 
-  let target = false;
+  let target = false, size = 0;
   for (const key in (ind ? { [ind]: index[ind] } : index)) {
     const result = depth === 2 ? null : indexMatch(index[key], ids, depth + 1);
 
     if (result !== false) {
       target = target || Object.create(null);
       target[key] = result;
+      size++;
     }
   }
+  if (target)
+    target[SIZE] = size;
   return target;
 }
 
@@ -1288,7 +1362,8 @@ class DatasetCoreAndReadableStream extends Readable {
     return new DatasetCoreAndReadableStream(this.filtered, subject, predicate, object, graph, this.options);
   }
 
-  *[Symbol.iterator]() {
-    yield* this._filtered || this.n3Store.readQuads(this.subject, this.predicate, this.object, this.graph);
+  [Symbol.iterator]() {
+    return this._filtered ? this._filtered[Symbol.iterator]() :
+      this.n3Store.readQuads(this.subject, this.predicate, this.object, this.graph);
   }
 }

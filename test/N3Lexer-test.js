@@ -173,6 +173,13 @@ describe('Lexer', () => {
                      { type: 'eof', line: 1 }),
     );
 
+    it(
+      'should tokenize prefixed names with all reserved escape sequences',
+      shouldTokenize("ex:a\\_\\~\\.\\-\\!\\$\\&\\'\\(\\)\\*\\+\\,\\;\\=\\/\\?\\#\\@\\%b ",
+                     { type: 'prefixed', prefix: 'ex', value: "a_~.-!$&'()*+,;=/?#@%b", line: 1 },
+                     { type: 'eof', line: 1 }),
+    );
+
     it('should tokenize the colon prefixed name', shouldTokenize(': : :.',
                    { type: 'prefixed', prefix: '', value: '', line: 1 },
                    { type: 'prefixed', prefix: '', value: '', line: 1 },
@@ -350,10 +357,38 @@ describe('Lexer', () => {
     );
 
     it(
+      'should tokenize a string with all ECHAR escape sequences',
+      shouldTokenize('"\\t \\b \\n \\r \\f \\\\ \\" \\\'" ',
+                     { type: 'literal', value: '\t \b \n \r \f \\ " \'', line: 1 },
+                     { type: 'eof', line: 1 }),
+    );
+
+    it(
       'should not tokenize a string with invalid characters',
       shouldNotTokenize('"\\uXYZX" ',
                         'Unexpected ""\\uXYZX"" on line 1.'),
     );
+
+    // Escapes for these characters are only allowed in local names of prefixed names
+    for (const char of '_~.-!$&()*+,;=/?#@%') {
+      it(
+        `should not tokenize a double-quoted string with the escape sequence \\${char}`,
+        shouldNotTokenize(`"a\\${char}b" `,
+                          `Unexpected ""a\\${char}b"" on line 1.`),
+      );
+
+      it(
+        `should not tokenize a single-quoted string with the escape sequence \\${char}`,
+        shouldNotTokenize(`'a\\${char}b' `,
+                          `Unexpected "'a\\${char}b'" on line 1.`),
+      );
+
+      it(
+        `should not tokenize a triple-quoted string with the escape sequence \\${char}`,
+        shouldNotTokenize(`"""a\\${char}b""" `,
+                          `Unexpected """"a\\${char}b"""" on line 1.`),
+      );
+    }
 
     it(
       'should not tokenize a literal with a surrogate pair via unicode escapes',
@@ -528,6 +563,9 @@ describe('Lexer', () => {
 
     it('should not tokenize a direction in uppercase', shouldNotTokenize('"string"@en--LTR',
         'Unexpected "--LTR" on line 1.'));
+
+    it('should not tokenize an invalid direction when "rtl" occurs later in the input', shouldNotTokenize('"string"@en--unk # rtl\n',
+        'Unexpected "--unk" on line 1.'));
 
     it(
       'should tokenize a quoted string literal with type',
@@ -976,6 +1014,96 @@ describe('Lexer', () => {
                    { type: 'eof', line: 1 }));
 
     it(
+      'should tokenize N3 verb keywords',
+      shouldTokenize('<s> has <p> <o>. <s> is <p> of <o>.',
+                     { type: 'IRI', value: 's', line: 1 },
+                     { type: 'has', line: 1 },
+                     { type: 'IRI', value: 'p', line: 1 },
+                     { type: 'IRI', value: 'o', line: 1 },
+                     { type: '.', line: 1 },
+                     { type: 'IRI', value: 's', line: 1 },
+                     { type: 'is', line: 1 },
+                     { type: 'IRI', value: 'p', line: 1 },
+                     { type: 'of', line: 1 },
+                     { type: 'IRI', value: 'o', line: 1 },
+                     { type: '.', line: 1 },
+                     { type: 'eof', line: 1 }),
+    );
+
+    it(
+      'should tokenize IRI property list identifiers',
+      shouldTokenize('[ id <s> <p> <o> ] [id<s> <p> <o>]',
+                     { type: '[', line: 1 },
+                     { type: 'id', line: 1 },
+                     { type: 'IRI', value: 's', line: 1 },
+                     { type: 'IRI', value: 'p', line: 1 },
+                     { type: 'IRI', value: 'o', line: 1 },
+                     { type: ']', line: 1 },
+                     { type: '[', line: 1 },
+                     { type: 'id', line: 1 },
+                     { type: 'IRI', value: 's', line: 1 },
+                     { type: 'IRI', value: 'p', line: 1 },
+                     { type: 'IRI', value: 'o', line: 1 },
+                     { type: ']', line: 1 },
+                     { type: 'eof', line: 1 }),
+    );
+
+    it(
+      'should tokenize N3 verb keywords split across chunks',
+      shouldTokenize(streamOf('<s> h', 'as <p> <o>. <s> i', 's <p> o', 'f <o>.'),
+                     { type: 'IRI', value: 's', line: 1 },
+                     { type: 'has', line: 1 },
+                     { type: 'IRI', value: 'p', line: 1 },
+                     { type: 'IRI', value: 'o', line: 1 },
+                     { type: '.', line: 1 },
+                     { type: 'IRI', value: 's', line: 1 },
+                     { type: 'is', line: 1 },
+                     { type: 'IRI', value: 'p', line: 1 },
+                     { type: 'of', line: 1 },
+                     { type: 'IRI', value: 'o', line: 1 },
+                     { type: '.', line: 1 },
+                     { type: 'eof', line: 1 }),
+    );
+
+    it(
+      'should tokenize an IRI property list identifier split across chunks',
+      shouldTokenize(streamOf('[ i', 'd <s> <p> <o> ]'),
+                     { type: '[', line: 1 },
+                     { type: 'id', line: 1 },
+                     { type: 'IRI', value: 's', line: 1 },
+                     { type: 'IRI', value: 'p', line: 1 },
+                     { type: 'IRI', value: 'o', line: 1 },
+                     { type: ']', line: 1 },
+                     { type: 'eof', line: 1 }),
+    );
+
+    it(
+      'should keep keyword-like prefixes as prefixed names',
+      shouldTokenize('has:p is:p of:p',
+                     { type: 'prefixed', prefix: 'has', value: 'p', line: 1 },
+                     { type: 'prefixed', prefix: 'is', value: 'p', line: 1 },
+                     { type: 'prefixed', prefix: 'of', value: 'p', line: 1 },
+                     { type: 'eof', line: 1 }),
+    );
+
+    it(
+      'should keep an id prefix as a prefixed name',
+      shouldTokenize('id:p',
+                     { type: 'prefixed', prefix: 'id', value: 'p', line: 1 },
+                     { type: 'eof', line: 1 }),
+    );
+
+    it(
+      'should not tokenize N3 verb keywords outside N3 mode',
+      shouldNotTokenize(new Lexer({ n3: false }), 'has ', 'Unexpected "has" on line 1.'),
+    );
+
+    it(
+      'should not tokenize IRI property list identifiers outside N3 mode',
+      shouldNotTokenize(new Lexer({ n3: false }), 'id ', 'Unexpected "id" on line 1.'),
+    );
+
+    it(
       'should tokenize the "a" predicate without spacing',
       shouldTokenize('[a<>].\n[a[]].\n[a()].\n<>a<>.\n<>a[].\n<>a().\n',
                      { type: '[', line: 1 },
@@ -1124,6 +1252,38 @@ describe('Lexer', () => {
                    { type: 'eof', line: 1 }));
 
     it(
+      'should tokenize an inverted predicate marker',
+      shouldTokenize('<s> <- <p> <o>. <-s> <-<-p> <-o>.',
+                     { type: 'IRI', value: 's', line: 1 },
+                     { type: 'inversePredicate', line: 1 },
+                     { type: 'IRI', value: 'p', line: 1 },
+                     { type: 'IRI', value: 'o', line: 1 },
+                     { type: '.', line: 1 },
+                     { type: 'IRI', value: '-s', line: 1 },
+                     { type: 'inversePredicate', line: 1 },
+                     { type: 'IRI', value: '-p', line: 1 },
+                     { type: 'IRI', value: '-o', line: 1 },
+                     { type: '.', line: 1 },
+                     { type: 'eof', line: 1 }),
+    );
+
+    it(
+      'should tokenize an inverted predicate marker split across chunks',
+      shouldTokenize(streamOf('<s> <', '- <p> <o>.'),
+                     { type: 'IRI', value: 's', line: 1 },
+                     { type: 'inversePredicate', line: 1 },
+                     { type: 'IRI', value: 'p', line: 1 },
+                     { type: 'IRI', value: 'o', line: 1 },
+                     { type: '.', line: 1 },
+                     { type: 'eof', line: 1 }),
+    );
+
+    it(
+      'should not tokenize an inverted predicate marker outside N3 mode',
+      shouldNotTokenize(new Lexer({ n3: false }), '<- ', 'Unexpected "<-" on line 1.'),
+    );
+
+    it(
       'should tokenize a split left implication',
       shouldTokenize(streamOf('<a> <', '= <b> '),
         { type: 'IRI', value: 'a', line: 1 },
@@ -1171,7 +1331,7 @@ describe('Lexer', () => {
     );
 
     it('does not call setEncoding if not available', () => {
-      new Lexer().tokenize({ on: function () {} });
+      expect(() => new Lexer().tokenize({ on: function () {} })).not.toThrow();
     });
 
     it('should tokenize an TripleTerm start', shouldTokenize('<<(',

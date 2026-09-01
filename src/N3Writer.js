@@ -59,10 +59,12 @@ export default class N3Writer {
       this._lineMode = false;
       this._graph = DEFAULTGRAPH;
       this._prefixIRIs = Object.create(null);
-      options.prefixes && this.addPrefixes(options.prefixes);
       if (options.baseIRI) {
         this._baseIri = new BaseIRI(options.baseIRI);
+        if (options.writeBase)
+          this._write(`@base <${options.baseIRI}>.\n`);
       }
+      options.prefixes && this.addPrefixes(options.prefixes);
     }
     else {
       this._lineMode = true;
@@ -88,7 +90,8 @@ export default class N3Writer {
       // Write the graph's label if it has changed
       // (the id-based fast path of `equals` would conflate
       // the empty named node `<>` with the default graph)
-      if (!graph.equals(this._graph) || graph.termType !== this._graph.termType) {
+      if (graph !== this._graph &&
+          (!graph.equals(this._graph) || graph.termType !== this._graph.termType)) {
         // Close the previous graph and start the new one
         this._write((this._subject === null ? '' : (this._inDefaultGraph ? '.\n' : '\n}\n')) +
                     (DEFAULTGRAPH.equals(graph) ? '' : `${this._encodeIriOrBlank(graph)} {\n`));
@@ -96,9 +99,9 @@ export default class N3Writer {
         this._subject = null;
       }
       // Don't repeat the subject if it's the same
-      if (subject.equals(this._subject)) {
+      if (subject === this._subject || subject.equals(this._subject)) {
         // Don't repeat the predicate if it's the same
-        if (predicate.equals(this._predicate))
+        if (predicate === this._predicate || predicate.equals(this._predicate))
           this._write(`, ${this._encodeObject(object)}`, done);
         // Same subject, different predicate
         else
@@ -177,9 +180,12 @@ export default class N3Writer {
       value = value.replace(escapeAll, characterReplacer);
 
     // Write a language-tagged literal
-    const direction = literal.direction ? `--${literal.direction}` : '';
-    if (literal.language)
-      return `"${value}"@${literal.language}${direction}`;
+    const language = literal.language;
+    if (language) {
+      const literalDirection = literal.direction;
+      const direction = literalDirection ? `--${literalDirection}` : '';
+      return `"${value}"@${language}${direction}`;
+    }
 
     // Write dedicated literals per data type
     if (this._lineMode) {
