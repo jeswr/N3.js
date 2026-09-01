@@ -20,7 +20,7 @@ export default class N3Parser {
     // lexer's {line, start, end} for each position's source token (null for
     // synthetic terms without one).  Zero cost when the option is absent.
     this._onQuadSpans = options.onQuadSpans || null;
-    this._termSpans = this._onQuadSpans ? new WeakMap() : null;
+    this._termSpans = this._onQuadSpans ? new Map() : null;
 
     // Set supported features depending on the format
     const format = (typeof options.format === 'string') ?
@@ -314,7 +314,7 @@ export default class N3Parser {
 
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
-        if (this._termSpans !== null) this._literalSpan = { line: token.line, start: token.offsetStart, end: token.offsetEnd };
+        if (this._termSpans !== null) this._literalSpan = token;
         return this._completeSubjectLiteral;
       }
       else {
@@ -385,7 +385,7 @@ export default class N3Parser {
 
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
-        if (this._termSpans !== null) this._literalSpan = { line: token.line, start: token.offsetStart, end: token.offsetEnd };
+        if (this._termSpans !== null) this._literalSpan = token;
         return this._completePredicateLiteral;
       }
       else
@@ -448,7 +448,7 @@ export default class N3Parser {
       // Regular literal, can still get a datatype or language
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
-        if (this._termSpans !== null) this._literalSpan = { line: token.line, start: token.offsetStart, end: token.offsetEnd };
+        if (this._termSpans !== null) this._literalSpan = token;
         return this._readDataTypeOrLang;
       }
       // Pre-datatyped string literal (prefix stores the datatype)
@@ -664,7 +664,7 @@ export default class N3Parser {
       // Regular literal, can still get a datatype or language
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
-        if (this._termSpans !== null) this._literalSpan = { line: token.line, start: token.offsetStart, end: token.offsetEnd };
+        if (this._termSpans !== null) this._literalSpan = token;
         next = this._readListItemDataTypeOrLang;
       }
       // Pre-datatyped string literal (prefix stores the datatype)
@@ -1427,12 +1427,7 @@ export default class N3Parser {
   _emit(subject, predicate, object, graph) {
     const quad = this._factory.quad(subject, predicate, object, graph || this.DEFAULTGRAPH);
     if (this._onQuadSpans)
-      this._onQuadSpans(quad, {
-        subject:   this._termSpans.get(subject) || null,
-        predicate: this._termSpans.get(predicate) || null,
-        object:    this._termSpans.get(object) || null,
-        graph:     graph && this._termSpans.get(graph) || null,
-      });
+      this._onQuadSpans(quad);
     this._callback(null, quad);
   }
 
@@ -1446,7 +1441,7 @@ export default class N3Parser {
   // ### `_noteSpan` records a term's source token span when tracking is on
   _noteSpan(term, token) {
     if (this._termSpans !== null && term && token && typeof term === 'object')
-      this._termSpans.set(term, { line: token.line, start: token.offsetStart, end: token.offsetEnd });
+      this._termSpans.set(term, token);
     return term;
   }
 
