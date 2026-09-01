@@ -1,4 +1,4 @@
-import { Parser, Store, ProvenanceParser, ProvenanceIndex, termKey, DataFactory } from '../src';
+import { Lexer, Parser, Store, ProvenanceParser, ProvenanceIndex, termKey, DataFactory } from '../src';
 
 const BASE_IRI = 'http://example.org/';
 
@@ -45,6 +45,95 @@ describe('ProvenanceParser', () => {
       const { quads, provenance } = parse(doc);
       const [u] = provenance.get(quads[0]);
       expect(slice(doc, u.object[0])).toBe('"hello"');
+    });
+
+    it('distinguishes positions when a frozen factory interns terms', () => {
+      const nodes = new Map();
+      const factory = {
+        ...DataFactory,
+        namedNode(value) {
+          let term = nodes.get(value);
+          if (!term) {
+            term = Object.freeze(DataFactory.namedNode(value));
+            nodes.set(value, term);
+          }
+          return term;
+        },
+        defaultGraph() { return Object.freeze(DataFactory.defaultGraph()); },
+        quad(subject, predicate, object, graph) {
+          return DataFactory.quad(subject, predicate, object, graph);
+        },
+      };
+      const doc = '<http://x> <http://x> <http://x> .\n<http://x> <http://x> <http://x> .';
+      const { quads, provenance } = parse(doc, { factory, format: 'N-Triples' });
+
+      expect(quads[0].subject).toBe(quads[0].predicate);
+      expect(quads[0].predicate).toBe(quads[0].object);
+      const utterances = provenance.get(quads[0]);
+      expect(utterances).toHaveLength(2);
+      expect(utterances.map(utterance => [
+        utterance.subject[0].start,
+        utterance.predicate[0].start,
+        utterance.object[0].start,
+      ])).toEqual([[0, 11, 22], [35, 46, 57]]);
+      expect(Reflect.ownKeys(quads[0].subject)).toEqual(['id']);
+    });
+  });
+
+  describe('independent event streams', () => {
+    it('exposes a lexical token log without retaining parser token objects', () => {
+      const doc = '<s> <p> "value"@en .';
+      const { tokens } = parse(doc);
+      const observed = [...tokens];
+      expect(observed.map(token => token.type))
+        .toEqual(['IRI', 'IRI', 'literal', 'langcode', '.', 'eof']);
+      expect(tokens.lexeme(0)).toBe('<s>');
+      expect(tokens.lexeme(2)).toBe('"value"');
+      expect(tokens.lexeme(3)).toBe('@en');
+    });
+
+    it('keeps document-relative offsets after a leading BOM', () => {
+      const doc = '\ufeff<s> <p> <o> .';
+      const { quads, provenance, tokens } = parse(doc);
+      const [utterance] = provenance.get(quads[0]);
+      expect(utterance.subject[0].start).toBe(1);
+      expect(slice(doc, utterance.subject[0])).toBe('<s>');
+      expect(tokens.lexeme(0)).toBe('<s>');
+    });
+
+    it('reports compact quad origins independently from token events', () => {
+      const tokenIds = [], origins = [];
+      new Parser({
+        baseIRI: BASE_IRI,
+        onToken(token, start, end, sourceId) {
+          tokenIds.push({ type: token.type, start, end, sourceId });
+        },
+        onQuadOrigin(quad, subject, predicate, object, graph) {
+          origins.push({ quad, subject, predicate, object, graph });
+        },
+      }).parse('<s> <p> <o> .');
+
+      expect(tokenIds.map(token => token.sourceId)).toEqual([0, 1, 2, 3, 4]);
+      expect(origins).toHaveLength(1);
+      expect(origins[0]).toMatchObject({ subject: 0, predicate: 1, object: 2, graph: -1 });
+    });
+
+    it('does not let a token observer corrupt semantic correlation', () => {
+      const origins = [];
+      new Parser({
+        baseIRI: BASE_IRI,
+        onToken(token) { token.sourceId = 999; },
+        onQuadOrigin(quad, subject, predicate, object) {
+          origins.push({ subject, predicate, object });
+        },
+      }).parse('<s> <p> <o> .');
+      expect(origins).toEqual([{ subject: 0, predicate: 1, object: 2 }]);
+    });
+
+    it('does not add source IDs to ordinary lexer tokens', () => {
+      const tokens = new Lexer({ lineMode: true })
+        .tokenize('<http://s> <http://p> <http://o> .');
+      expect(tokens.every(token => !Object.hasOwn(token, 'sourceId'))).toBe(true);
     });
   });
 
@@ -113,7 +202,7 @@ describe('ProvenanceParser', () => {
     });
 
     // Numbers and booleans reach the parser as a single `literal` token whose
-    // prefix already holds the datatype, so they bypass the _literalSpan dance.
+    // prefix already holds the datatype.
     it('spans pre-datatyped object literals', () => {
       const doc = '<s> <p> 42, 1.5e0, true .';
       const { quads, provenance } = parse(doc);
@@ -167,7 +256,7 @@ describe('ProvenanceParser', () => {
     });
   });
 
-  describe('the onQuadSpans option', () => {
+  describe('the quad-origin event', () => {
     it('does not change what the parser emits', () => {
       const doc = '@prefix ex: <http://ex.example/>.\nex:s ex:p [ ex:q (1 2) ], "x"@en--ltr .';
       // anonymous blank node labels come from a global counter, so compare

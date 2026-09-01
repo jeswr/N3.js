@@ -82,9 +82,10 @@ export default class N3Lexer {
     this._literalClosingPos = 0;
     // Absolute character offset of the head of `_input` within the document
     this._offset = 0;
-    // Only annotate tokens with absolute offsets when asked (keeps the
-    // default token shape unchanged)
-    this._trackOffsets = !!options.trackOffsets;
+    // Optional lexical observer and occurrence IDs. IDs are only added to
+    // tokens when the parser needs to correlate lexical and semantic events.
+    this._onToken = options.onToken || null;
+    this._trackTokenIds = !!options.trackTokenIds;
   }
 
   // ## Private methods
@@ -428,11 +429,15 @@ export default class N3Lexer {
       const start = input ? currentLineLength - input.length : currentLineLength;
       const end = start + length;
       const token = { type, value, prefix, line, start, end };
-      // absolute document offsets (the token begins at the unconsumed head)
-      if (self._trackOffsets) {
-        token.offsetStart = self._offset;
-        token.offsetEnd = self._offset + length;
-      }
+      let sourceId;
+      if (self._trackTokenIds || self._onToken)
+        sourceId = self._tokenId++;
+      if (self._onToken)
+        self._onToken(token, self._offset, self._offset + length, sourceId);
+      // Attach the occurrence only after observers return, so they cannot
+      // corrupt the parser's semantic correlation by mutating the token.
+      if (self._trackTokenIds)
+        token.sourceId = sourceId;
       callback(null, token);
       return token;
     }
@@ -524,7 +529,10 @@ export default class N3Lexer {
 
   // ### Strips off any starting UTF BOM mark.
   _readStartingBom(input) {
-    return input.startsWith('\ufeff') ? input.substr(1) : input;
+    if (!input.startsWith('\ufeff'))
+      return input;
+    this._offset++;
+    return input.substr(1);
   }
 
   // ## Public methods
@@ -533,6 +541,8 @@ export default class N3Lexer {
   // The input can be a string or a stream.
   tokenize(input, callback) {
     this._line = 1;
+    this._offset = 0;
+    this._tokenId = 0;
 
     // If the input is a string, continuously emit tokens through the callback until the end
     if (typeof input === 'string') {

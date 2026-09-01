@@ -1,22 +1,13 @@
-// **N3ProvenanceParser** wraps N3Parser to track quad *utterances* on the
-// side: a multiset of source occurrences layered over the set of quads.
+// **N3ProvenanceParser** combines two independent parser event streams:
+// lexical token occurrences and semantic quad-origin rows.
 //
-// RDF/JS stores are sets of value-equal quads; provenance needs the
-// occurrences.  Rather than slow the store down, this wrapper keeps a
-// Map from a canonical quad key (never object identity — RDF/JS only
-// promises `.equals()`, and N3Store reconstructs quads on read) to the
-// quad's utterances:
-//
-//   {quad, subject: Range[], predicate: Range[], object: Range[], graph: Range[]}
-//
-// Each Range is {start, end} in absolute character offsets (plus
-// {line, column} of the start).  Ranges come in arrays because provenance
-// can be split or synthetic; a position whose term has no source token
-// (e.g. rdf:first in a collection) has an empty array.
-//
-// The underlying parser reports spans through its opt-in `onQuadSpans`
-// option, which costs nothing when unused.
+// Terms remain ordinary RDF/JS values. The parser carries token occurrence IDs
+// beside its subject/predicate/object/graph state, and this wrapper retains the
+// IDs in compact arrays. Public Range objects are materialized only on lookup.
 import N3Parser from './N3Parser';
+import { termToId } from './N3DataFactory';
+
+const NO_TOKEN = 0xFFFFFFFF;
 
 export function termKey(term) {
   switch (term.termType) {
@@ -38,26 +29,165 @@ export function termKey(term) {
 }
 
 export function quadKey(quad) {
-  return `${termKey(quad.subject)} ${termKey(quad.predicate)} ${termKey(quad.object)} ${termKey(quad.graph)}`;
+  return termToId(quad);
+}
+
+export class TokenLog {
+  constructor(input, capacity = Math.max(16, Math.ceil(input.length / 16))) {
+    this._input = input;
+    this._positions = new Uint32Array(capacity * 3);
+    this._types = new Uint8Array(capacity);
+    this._typeIds = Object.create(null);
+    this._typeNames = [];
+    this.length = 0;
+  }
+
+  _grow() {
+    const positions = new Uint32Array(this._positions.length * 2);
+    positions.set(this._positions);
+    this._positions = positions;
+    const types = new Uint8Array(this._types.length * 2);
+    types.set(this._types);
+    this._types = types;
+  }
+
+  _add(token, start, consumedEnd, sourceId) {
+    if (sourceId !== this.length)
+      throw new Error(`Unexpected token occurrence ID ${sourceId}; expected ${this.length}`);
+    if (sourceId >= this._types.length)
+      this._grow();
+
+    // Several lexer rules consume trailing whitespace. Keep offsets for the
+    // lexical spelling, while the parser remains free to consume past it.
+    let end = consumedEnd, char;
+    while (end > start && ((char = this._input.charCodeAt(end - 1)) === 0x09 ||
+                           char === 0x0A || char === 0x0D || char === 0x20))
+      end--;
+
+    const position = sourceId * 3;
+    this._positions[position] = start;
+    this._positions[position + 1] = end;
+    this._positions[position + 2] = token.line;
+
+    let typeId = this._typeIds[token.type];
+    if (typeId === undefined) {
+      typeId = this._typeNames.length;
+      this._typeIds[token.type] = typeId;
+      this._typeNames.push(token.type);
+    }
+    this._types[sourceId] = typeId;
+    this.length++;
+  }
+
+  _finish() {
+    this._positions = this._positions.slice(0, this.length * 3);
+    this._types = this._types.slice(0, this.length);
+  }
+
+  range(sourceId) {
+    if (sourceId === NO_TOKEN || sourceId < 0 || sourceId >= this.length)
+      return [];
+    const position = sourceId * 3;
+    return [{
+      start: this._positions[position],
+      end: this._positions[position + 1],
+      line: this._positions[position + 2],
+    }];
+  }
+
+  token(sourceId) {
+    const [range] = this.range(sourceId);
+    if (!range)
+      return null;
+    return {
+      id: sourceId,
+      type: this._typeNames[this._types[sourceId]],
+      ...range,
+    };
+  }
+
+  lexeme(sourceId) {
+    const token = this.token(sourceId);
+    return token ? this._input.slice(token.start, token.end) : '';
+  }
+
+  *[Symbol.iterator]() {
+    for (let id = 0; id < this.length; id++)
+      yield this.token(id);
+  }
 }
 
 export class ProvenanceIndex {
-  constructor() { this._map = new Map(); }
-
-  _add(quad, utterance) {
-    const key = quadKey(quad);
-    if (!this._map.has(key))
-      this._map.set(key, []);
-    this._map.get(key).push(utterance);
+  constructor(tokens = null, capacity = 16) {
+    this._tokens = tokens;
+    this._map = new Map();
+    this._origins = new Uint32Array(Math.max(16, capacity) * 4);
+    this._quads = [];
+    this._length = 0;
   }
 
-  // ### `get` returns the utterances of a quad (empty array if never uttered)
-  get(quad) { return this._map.get(quadKey(quad)) || []; }
+  _grow() {
+    const origins = new Uint32Array(this._origins.length * 2);
+    origins.set(this._origins);
+    this._origins = origins;
+  }
 
-  // ### `size` is the number of distinct quads uttered
-  get size() { return this._map.size; }
+  _add(quad, subject, predicate, object, graph) {
+    const occurrence = this._length++;
+    if (occurrence * 4 >= this._origins.length)
+      this._grow();
+    const position = occurrence * 4;
+    this._origins[position] = subject;
+    this._origins[position + 1] = predicate;
+    this._origins[position + 2] = object;
+    this._origins[position + 3] = graph;
+    this._quads[occurrence] = quad;
 
-  [Symbol.iterator]() { return this._map.values(); }
+    const key = quadKey(quad), existing = this._map.get(key);
+    if (existing === undefined)
+      this._map.set(key, occurrence);
+    else if (typeof existing === 'number')
+      this._map.set(key, [existing, occurrence]);
+    else
+      existing.push(occurrence);
+  }
+
+  _finish() {
+    this._origins = this._origins.slice(0, this._length * 4);
+  }
+
+  _materialize(occurrence) {
+    const position = occurrence * 4, tokens = this._tokens;
+    return {
+      quad: this._quads[occurrence],
+      subject: tokens.range(this._origins[position]),
+      predicate: tokens.range(this._origins[position + 1]),
+      object: tokens.range(this._origins[position + 2]),
+      graph: tokens.range(this._origins[position + 3]),
+    };
+  }
+
+  _materializeAll(occurrences) {
+    if (occurrences === undefined)
+      return [];
+    if (typeof occurrences === 'number')
+      return [this._materialize(occurrences)];
+    return occurrences.map(occurrence => this._materialize(occurrence));
+  }
+
+  // ### `get` returns the utterances of a value-equal quad.
+  get(quad) {
+    return this._materializeAll(this._map.get(quadKey(quad)));
+  }
+
+  get size() {
+    return this._map.size;
+  }
+
+  *[Symbol.iterator]() {
+    for (const occurrences of this._map.values())
+      yield this._materializeAll(occurrences);
+  }
 }
 
 export default class N3ProvenanceParser {
@@ -65,36 +195,28 @@ export default class N3ProvenanceParser {
     this._options = options;
   }
 
-  // ### `parse` synchronously parses `input`, returning
-  // `{quads, provenance, prefixes}`
+  // ### `parse` synchronously returns quads and independently retained origins.
   parse(input) {
-    function absolute(span) {
-      if (!span)
-        return [];
-      const start = span.start;
-      let end = span.end;
-      // some lexer token lengths include trailing whitespace; trim it
-      while (end > start && /\s/.test(input[end - 1]))
-        end--;
-      return [{ start, end, line: span.line }];
-    }
-
-    const provenance = new ProvenanceIndex();
+    const tokens = new TokenLog(input);
+    const provenance = new ProvenanceIndex(tokens, Math.ceil(input.length / 48));
+    const userOnToken = this._options.onToken;
+    const userOnQuadOrigin = this._options.onQuadOrigin;
     const parser = new N3Parser({
       ...this._options,
-      // fires synchronously from _emit during the synchronous parse below
-      onQuadSpans: (quad, spans) => {
-        provenance._add(quad, {
-          quad,
-          subject:   absolute(spans.subject),
-          predicate: absolute(spans.predicate),
-          object:    absolute(spans.object),
-          graph:     absolute(spans.graph),
-        });
+      onToken: (token, start, end, sourceId) => {
+        tokens._add(token, start, end, sourceId);
+        if (userOnToken)
+          userOnToken(token, start, end, sourceId);
+      },
+      onQuadOrigin: (quad, subject, predicate, object, graph) => {
+        provenance._add(quad, subject, predicate, object, graph);
+        if (userOnQuadOrigin)
+          userOnQuadOrigin(quad, subject, predicate, object, graph);
       },
     });
     const quads = parser.parse(input);
-    const prefixes = parser._prefixes;
-    return { quads, provenance, prefixes };
+    tokens._finish();
+    provenance._finish();
+    return { quads, provenance, prefixes: parser._prefixes, tokens };
   }
 }

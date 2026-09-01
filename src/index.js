@@ -1,6 +1,6 @@
 import Lexer from './N3Lexer';
 import Parser from './N3Parser';
-import ProvenanceParser, { ProvenanceIndex, quadKey, termKey } from './N3ProvenanceParser';
+import ProvenanceParser, { ProvenanceIndex, TokenLog, quadKey, termKey } from './N3ProvenanceParser';
 import Writer from './N3Writer';
 import Store, { N3EntityIndex as EntityIndex } from './N3Store';
 import StoreFactory from './N3StoreFactory';
@@ -32,6 +32,7 @@ export {
   Parser,
   ProvenanceParser,
   ProvenanceIndex,
+  TokenLog,
   quadKey,
   termKey,
   Writer,
@@ -66,6 +67,7 @@ export default {
   Parser,
   ProvenanceParser,
   ProvenanceIndex,
+  TokenLog,
   Writer,
   Store,
   StoreFactory,
