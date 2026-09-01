@@ -27,7 +27,7 @@ export function quadKey(quad) {
 }
 
 export class ProvenanceIndex {
-  constructor(input = '', termTokens = new Map()) {
+  constructor(input = '', termTokens = null) {
     this._input = input;
     this._termTokens = termTokens;
     this._map = new Map();
@@ -88,9 +88,12 @@ export default class N3ProvenanceParser {
   }
 
   parse(input) {
-    const parser = new N3Parser({ ...this._options, onQuadSpans() {} });
-    const provenance = new ProvenanceIndex(input, parser._termSpans);
-    parser._onQuadSpans = quad => provenance._add(quad);
+    const provenance = new ProvenanceIndex(input);
+    const parser = new N3Parser({
+      ...this._options,
+      onQuadSpans: quad => provenance._add(quad),
+    });
+    provenance._termTokens = parser._termSpans;
     const quads = parser.parse(input);
     return { quads, provenance, prefixes: parser._prefixes };
   }
