@@ -1,22 +1,10 @@
-// **N3ProvenanceParser** wraps N3Parser to track quad *utterances* on the
-// side: a multiset of source occurrences layered over the set of quads.
-//
-// RDF/JS stores are sets of value-equal quads; provenance needs the
-// occurrences.  Rather than slow the store down, this wrapper keeps a
-// Map from a canonical quad key (never object identity — RDF/JS only
-// promises `.equals()`, and N3Store reconstructs quads on read) to the
-// quad's utterances:
-//
-//   {quad, subject: Range[], predicate: Range[], object: Range[], graph: Range[]}
-//
-// Each Range is {start, end} in absolute character offsets (plus
-// {line, column} of the start).  Ranges come in arrays because provenance
-// can be split or synthetic; a position whose term has no source token
-// (e.g. rdf:first in a collection) has an empty array.
-//
-// The underlying parser reports spans through its opt-in `onQuadSpans`
-// option, which costs nothing when unused.
+// **N3ProvenanceParser** stores the lexer token directly on each parsed RDF/JS
+// term under a symbol, avoiding a parser-owned term lookup table.
 import N3Parser from './N3Parser';
+import { termToId } from './N3DataFactory';
+
+export const TERM_TOKEN = Symbol('n3.sourceToken');
+const TRACKING_ENABLED = Object.freeze({});
 
 export function termKey(term) {
   switch (term.termType) {
@@ -37,64 +25,109 @@ export function termKey(term) {
   }
 }
 
-export function quadKey(quad) {
-  return `${termKey(quad.subject)} ${termKey(quad.predicate)} ${termKey(quad.object)} ${termKey(quad.graph)}`;
+export function quadKey(quad) { return termToId(quad); }
+
+function tokenRange(input, token) {
+  if (!token)
+    return [];
+  const start = token.offsetStart ?? token.start;
+  let end = token.offsetEnd ?? token.end;
+  while (end > start && /\s/.test(input[end - 1]))
+    end--;
+  return [{ start, end, line: token.line }];
+}
+
+export function termRanges(input, term) {
+  return tokenRange(input, term && term[TERM_TOKEN]);
+}
+
+class TermLocationParser extends N3Parser {
+  constructor(options = {}) {
+    const onLocation = options.onLocation || null;
+    const parserOptions = { ...options, onQuadSpans() {} };
+    delete parserOptions.onLocation;
+    super(parserOptions);
+    this._onQuadSpans = null;
+    this._termSpans = TRACKING_ENABLED;
+    this._onLocation = onLocation;
+  }
+
+  _noteSpan(term, token) {
+    if (term && token && typeof term === 'object')
+      term[TERM_TOKEN] = token;
+    return term;
+  }
+
+  _noteLiteralSpan(literal) {
+    if (this._literalSpan)
+      literal[TERM_TOKEN] = this._literalSpan;
+    return literal;
+  }
+
+  _emit(subject, predicate, object, graph) {
+    const quad = this._factory.quad(subject, predicate, object, graph || this.DEFAULTGRAPH);
+    if (this._onLocation)
+      this._onLocation(quad);
+    this._callback(null, quad);
+  }
 }
 
 export class ProvenanceIndex {
-  constructor() { this._map = new Map(); }
-
-  _add(quad, utterance) {
-    const key = quadKey(quad);
-    if (!this._map.has(key))
-      this._map.set(key, []);
-    this._map.get(key).push(utterance);
+  constructor(input = '') {
+    this._input = input;
+    this._map = new Map();
+    this._quads = [];
   }
 
-  // ### `get` returns the utterances of a quad (empty array if never uttered)
-  get(quad) { return this._map.get(quadKey(quad)) || []; }
+  _add(quad) {
+    const id = this._quads.length;
+    this._quads.push(quad);
+    const key = quadKey(quad), previous = this._map.get(key);
+    if (previous === undefined)
+      this._map.set(key, id);
+    else if (typeof previous === 'number')
+      this._map.set(key, [previous, id]);
+    else
+      previous.push(id);
+  }
 
-  // ### `size` is the number of distinct quads uttered
+  _utterance(id) {
+    const quad = this._quads[id];
+    return {
+      quad,
+      subject: termRanges(this._input, quad.subject),
+      predicate: termRanges(this._input, quad.predicate),
+      object: termRanges(this._input, quad.object),
+      graph: termRanges(this._input, quad.graph),
+    };
+  }
+
+  get(quad) {
+    const ids = this._map.get(quadKey(quad));
+    if (ids === undefined)
+      return [];
+    return typeof ids === 'number' ? [this._utterance(ids)] : ids.map(id => this._utterance(id));
+  }
+
   get size() { return this._map.size; }
+  get utteranceCount() { return this._quads.length; }
 
-  [Symbol.iterator]() { return this._map.values(); }
+  *[Symbol.iterator]() {
+    for (const ids of this._map.values())
+      yield typeof ids === 'number' ? [this._utterance(ids)] : ids.map(id => this._utterance(id));
+  }
 }
 
 export default class N3ProvenanceParser {
-  constructor(options = {}) {
-    this._options = options;
-  }
+  constructor(options = {}) { this._options = options; }
 
-  // ### `parse` synchronously parses `input`, returning
-  // `{quads, provenance, prefixes}`
   parse(input) {
-    function absolute(span) {
-      if (!span)
-        return [];
-      const start = span.start;
-      let end = span.end;
-      // some lexer token lengths include trailing whitespace; trim it
-      while (end > start && /\s/.test(input[end - 1]))
-        end--;
-      return [{ start, end, line: span.line }];
-    }
-
-    const provenance = new ProvenanceIndex();
-    const parser = new N3Parser({
+    const provenance = new ProvenanceIndex(input);
+    const parser = new TermLocationParser({
       ...this._options,
-      // fires synchronously from _emit during the synchronous parse below
-      onQuadSpans: (quad, spans) => {
-        provenance._add(quad, {
-          quad,
-          subject:   absolute(spans.subject),
-          predicate: absolute(spans.predicate),
-          object:    absolute(spans.object),
-          graph:     absolute(spans.graph),
-        });
-      },
+      onLocation: quad => provenance._add(quad),
     });
     const quads = parser.parse(input);
-    const prefixes = parser._prefixes;
-    return { quads, provenance, prefixes };
+    return { quads, provenance, prefixes: parser._prefixes };
   }
 }
