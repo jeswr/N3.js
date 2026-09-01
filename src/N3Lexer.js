@@ -4,14 +4,18 @@ import namespaces from './IRIs';
 
 const { xsd } = namespaces;
 
-// Regular expression and replacement string to escape N3 strings
+// Regular expression and replacement strings to unescape N3 strings
 const escapeSequence = /\\u([a-fA-F0-9]{4})|\\U([a-fA-F0-9]{8})|\\([^])/g;
-const escapeReplacements = {
+// Fixed escape sequences allowed in string literals (ECHAR)
+const stringEscapeReplacements = {
   '\\': '\\', "'": "'", '"': '"',
   'n': '\n', 'r': '\r', 't': '\t', 'f': '\f', 'b': '\b',
+};
+// Fixed escape sequences allowed in local names of prefixed names (PN_LOCAL_ESC)
+const localNameEscapeReplacements = {
   '_': '_', '~': '~', '.': '.', '-': '-', '!': '!', '$': '$', '&': '&',
-  '(': '(', ')': ')', '*': '*', '+': '+', ',': ',', ';': ';', '=': '=',
-  '/': '/', '?': '?', '#': '#', '@': '@', '%': '%',
+  "'": "'", '(': '(', ')': ')', '*': '*', '+': '+', ',': ',', ';': ';',
+  '=': '=', '/': '/', '?': '?', '#': '#', '@': '@', '%': '%',
 };
 const illegalIriChars = /[\x00-\x20<>\\"\{\}\|\^\`]/;
 
@@ -44,15 +48,17 @@ export default class N3Lexer {
     this._simpleQuotedString = /^"([^"\\\r\n]*)"(?=[^"])/; // string without escape sequences
     this._simpleApostropheString = /^'([^'\\\r\n]*)'(?=[^'])/;
     this._langcode = /^@([a-z]+(?:-[a-z0-9]+)*)(?=[^a-z0-9])/i;
-    this._dircode = /^--(ltr)|(rtl)/;
+    this._dircode = /^--(?:(ltr)|(rtl))/;
     this._prefix = /^((?:[A-Za-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])(?:\.?[\-0-9A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])*)?:(?=[#\s<])/;
     this._prefixed = /^((?:[A-Za-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])(?:\.?[\-0-9A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])*)?:((?:(?:[0-:A-Z_a-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff]|%[0-9a-fA-F]{2}|\\[!#-\/;=?\-@_~])(?:(?:[\.\-0-:A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff]|%[0-9a-fA-F]{2}|\\[!#-\/;=?\-@_~])*(?:[\-0-:A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff]|%[0-9a-fA-F]{2}|\\[!#-\/;=?\-@_~]))?)?)(?:[ \t]+|(?=\.?[,;!\^\s#()\[\]\{\}"'<>]))/;
     this._variable = /^\?(?:(?:[A-Z_a-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])(?:[\-0-:A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])*)(?=[.,;!\^\s#()\[\]\{\}"'<>])/;
-    this._blank = /^_:((?:[0-9A-Z_a-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])(?:\.?[\-0-9A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])*)(?:[ \t]+|(?=\.?[,;:\s#()\[\]\{\}"'<>]))/;
-    this._number = /^[\-+]?(?:(\d+\.\d*|\.?\d+)[eE][\-+]?|\d*(\.)?)\d+(?=\.?[,;:\s#()\[\]\{\}"'<>])/;
-    this._boolean = /^(?:true|false)(?=[.,;\s#()\[\]\{\}"'<>])/;
+    this._blank = /^_:((?:[0-9A-Z_a-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])(?:\.?[\-0-9A-Z_a-z\xb7\xc0-\xd6\xd8-\xf6\xf8-\u037d\u037f-\u1fff\u200c\u200d\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd]|[\ud800-\udb7f][\udc00-\udfff])*)(?:[ \t]+|(?=\.?[,;:!\^\s#()\[\]\{\}"'<>]))/;
+    this._number = /^[\-+]?(?:(\d+\.\d*|\.?\d+)[eE][\-+]?|\d*(\.)?)\d+(?=\.?[,;:!\^\s#()\[\]\{\}"'<>])/;
+    this._boolean = /^(?:true|false)(?=[.,;!\^\s#()\[\]\{\}"'<>])/;
     this._atKeyword = /^@[a-z]+(?=[\s#<:])/i;
     this._keyword = /^(?:PREFIX|BASE|VERSION|GRAPH)(?=[\s#<])/i;
+    this._n3Verb = /^(?:has|is|of)(?=[\s#()\[\]\{\}"'<>?_+\-0-9])/;
+    this._n3Id = /^id(?=[\s#<])/;
     this._shortPredicates = /^a(?=[\s#()\[\]\{\}"'<>])/;
     this._newline = /^[ \t]*(?:#[^\n\r]*)?(?:\r\n|\n|\r)[ \t]*/;
     this._comment = /#([^\n\r]*)/;
@@ -104,14 +110,14 @@ export default class N3Lexer {
           emitToken('comment', comment[1], '', this._line, whiteSpaceMatch[0].length);
         // Advance the input
         this._offset += whiteSpaceMatch[0].length;
-        input = input.substr(whiteSpaceMatch[0].length, input.length);
+        input = input.slice(whiteSpaceMatch[0].length);
         currentLineLength = input.length;
         this._line++;
       }
       // Skip whitespace on current line
       if (!whiteSpaceMatch && (whiteSpaceMatch = this._whitespace.exec(input)))
         this._offset += whiteSpaceMatch[0].length,
-        input = input.substr(whiteSpaceMatch[0].length, input.length);
+        input = input.slice(whiteSpaceMatch[0].length);
 
       // Stop for now if we're at the end
       if (this._endOfFile.test(input)) {
@@ -139,7 +145,7 @@ export default class N3Lexer {
         else if (input[1] === '^') {
           this._previousMarker = '^^';
           // Move to type IRI or prefixed name
-          this._offset += 2, input = input.substr(2);
+          this._offset += 2, input = input.slice(2);
           if (input[0] !== '<') {
             inconclusive = true;
             break;
@@ -160,7 +166,7 @@ export default class N3Lexer {
           type = 'IRI', value = match[1];
         // Try to find a full IRI with escape sequences
         else if (match = this._iri.exec(input)) {
-          value = this._unescape(match[1]);
+          value = this._unescape(match[1], stringEscapeReplacements);
           if (value === null || illegalIriChars.test(value))
             return reportSyntaxError(this);
           type = 'IRI';
@@ -177,6 +183,9 @@ export default class N3Lexer {
           if (this._isImpliedBy) type = 'abbreviation', value = '<';
           else type = 'inverse', value = '>';
         }
+        // Try to find an inverted predicate marker
+        else if (this._n3Mode && input.length > 1 && input[1] === '-')
+          type = 'inversePredicate', matchLength = 2;
         break;
 
       case '>':
@@ -322,6 +331,25 @@ export default class N3Lexer {
           inconclusive = true;
         break;
 
+      case 'h':
+      case 'o':
+        // Try to find an N3 verb keyword
+        if (this._n3Mode && (match = this._n3Verb.exec(input)))
+          type = match[0];
+        else
+          inconclusive = true;
+        break;
+
+      case 'i':
+        // Try to find an IRI property list identifier or N3 verb keyword
+        if (this._n3Mode && (match = this._n3Id.exec(input)))
+          type = 'id';
+        else if (this._n3Mode && (match = this._n3Verb.exec(input)))
+          type = match[0];
+        else
+          inconclusive = true;
+        break;
+
       case '=':
         // Try to find an implication arrow or equals sign
         if (this._n3Mode && input.length > 1) {
@@ -390,7 +418,7 @@ export default class N3Lexer {
         // Therefore, try inserting a space if we're at the end of the input.
         else if ((match = this._prefixed.exec(input)) ||
                  inputFinished && (match = this._prefixed.exec(`${input} `)))
-          type = 'prefixed', prefix = match[1] || '', value = this._unescape(match[2]);
+          type = 'prefixed', prefix = match[1] || '', value = this._unescape(match[2], localNameEscapeReplacements);
       }
 
       // A type token is special: it can only be emitted after an IRI or prefixed name is read
@@ -420,7 +448,7 @@ export default class N3Lexer {
       this._previousMarker = type;
 
       // Advance to next part to tokenize
-      this._offset += length, input = input.substr(length, input.length);
+      this._offset += length, input = input.slice(length);
     }
 
     // Emits the token through the callback
@@ -440,8 +468,9 @@ export default class N3Lexer {
     function reportSyntaxError(self) { callback(self._syntaxError(/^\S*/.exec(input)[0])); }
   }
 
-  // ### `_unescape` replaces N3 escape codes by their corresponding characters
-  _unescape(item) {
+  // ### `_unescape` replaces N3 escape codes by their corresponding characters,
+  // allowing only the fixed escape sequences from the given replacement table
+  _unescape(item, replacements) {
     let invalid = false;
     const replaced = item.replace(escapeSequence, (sequence, unicode4, unicode8, escapedChar) => {
       // 4-digit unicode character
@@ -464,8 +493,8 @@ export default class N3Lexer {
           String.fromCharCode(0xD800 + ((charCode -= 0x10000) >> 10), 0xDC00 + (charCode & 0x3FF));
       }
       // fixed escape sequence
-      if (escapedChar in escapeReplacements)
-        return escapeReplacements[escapedChar];
+      if (escapedChar in replacements)
+        return replacements[escapedChar];
       // invalid escape sequence
       invalid = true;
       return '';
@@ -501,7 +530,7 @@ export default class N3Lexer {
               openingLength === 3 && this._lineMode)
             break;
           this._line += lines;
-          return { value: this._unescape(raw), matchLength };
+          return { value: this._unescape(raw, stringEscapeReplacements), matchLength };
         }
         closingPos++;
       }
@@ -524,7 +553,7 @@ export default class N3Lexer {
 
   // ### Strips off any starting UTF BOM mark.
   _readStartingBom(input) {
-    return input.startsWith('\ufeff') ? input.substr(1) : input;
+    return input.startsWith('\ufeff') ? input.slice(1) : input;
   }
 
   // ## Public methods

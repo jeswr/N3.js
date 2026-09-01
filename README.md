@@ -45,7 +45,7 @@ or
 [_Introduction to browserify_](https://writingjavascript.org/posts/introduction-to-browserify).
 You will need to create a "UMD bundle" and supply a name (e.g. with the `-s N3` option in browserify).
 
-You can also load it via CDN, either as a UMD bundle that exposes a global `N3`:
+You can also load it via CDN, either as a classic script that exposes a global `N3`:
 ```html
 <script src="https://unpkg.com/n3/browser/n3.min.js"></script>
 ```
@@ -76,6 +76,16 @@ console.log(myQuad.subject.value);         // https://ruben.verborgh.org/profile
 console.log(myQuad.object.value);          // Ruben
 console.log(myQuad.object.datatype.value); // http://www.w3.org/1999/02/22-rdf-syntax-ns#langString
 console.log(myQuad.object.language);       // en
+```
+
+When no language or datatype is supplied, `literal` automatically assigns XSD datatypes
+to JavaScript booleans, numbers, and valid `Date` objects. Dates are converted to UTC
+using `Date.prototype.toISOString()` and receive the `xsd:dateTime` datatype:
+
+```JavaScript
+const created = literal(new Date('2017-04-27T14:39:48.901Z'));
+console.log(created.value);          // 2017-04-27T14:39:48.901Z
+console.log(created.datatype.value); // http://www.w3.org/2001/XMLSchema#dateTime
 ```
 
 Always create terms through a data factory such as `N3.DataFactory`,
@@ -165,6 +175,16 @@ This is done by passing a `baseIRI` argument upon creation:
 const parser = new N3.Parser({ baseIRI: 'http://example.org/' });
 ```
 
+In N3 mode, `implicitEmptyPrefix` can bind an undeclared empty prefix to the
+document IRI with a `#` fragment:
+```JavaScript
+const parser = new N3.Parser({
+  format: 'text/n3',
+  baseIRI: 'http://example.org/document',
+  implicitEmptyPrefix: true,
+});
+```
+
 By default, `N3.Parser` will prefix blank node labels with a `b{digit}_` prefix.
 This is done to prevent collisions of unrelated blank nodes having identical
 labels. The `blankNodePrefix` constructor argument can be used to modify the
@@ -178,6 +198,15 @@ The parser can output a backwards chaining rule such as `_:q <= _:p.` in two way
 - as `_:q log:isImpliedBy _:p.` (when the `isImpliedBy` flag is set to `true`)
 ```JavaScript
 const parser = new N3.Parser({ isImpliedBy: true });
+```
+
+By default, an empty formula `{}` is kept as a blank node graph term.
+The [N3 spec tests](https://w3c-cg.github.io/N3/tests/)
+(and the direction discussed in [w3c-cg/N3#185](https://github.com/w3c-cg/N3/issues/185))
+read it as the boolean literal `"true"^^xsd:boolean` instead;
+the `emptyFormulaAsTrue` flag enables that behavior:
+```JavaScript
+const parser = new N3.Parser({ format: 'text/n3', emptyFormulaAsTrue: true });
 ```
 
 ### From an RDF stream to quads
@@ -273,6 +302,12 @@ To write N-Triples (or N-Quads) instead, pass a `format` argument upon creation
 ```JavaScript
 const writer1 = new N3.Writer({ format: 'N-Triples' });
 const writer2 = new N3.Writer({ format: 'application/trig' });
+```
+
+A `baseIRI` argument makes the writer abbreviate IRIs relative to that base in Turtle/TriG serializations. Pass `writeBase: true` to also write the base as an `@base` directive at the top of the document (N-Triples and N-Quads remain directive-free).
+
+```JavaScript
+const writer = new N3.Writer({ baseIRI: 'http://example.org/', writeBase: true });
 ```
 
 ### From quads to an RDF stream
@@ -496,6 +531,62 @@ and allows a mixture of different syntaxes.
 Pass a `format` option to the constructor with the name or MIME type of a format
 for strict, fault-intolerant behavior.
 
+### Validation
+The **parser** validates the _syntax_ of the selected format's grammar, with the following exceptions:
+- IRIs are not checked for full [RFC 3987](https://www.rfc-editor.org/rfc/rfc3987) well-formedness
+  (`<http://example.org/%ZZ>` parses),
+  and relative IRIs remain relative when no `baseIRI` option is given;
+- literal values are not checked against their datatype (`"abc"^^xsd:integer` parses);
+- language tags are checked against the grammar, not against [BCP 47](https://www.rfc-editor.org/rfc/rfc5646);
+
+The **writer** trusts the terms it is given. Quads constructed with invalid term values are serialized as-is and can yield invalid documents.
+
+Therefore, term validation should be done post-parsing to ensure that valid RDF terms should be produced.
+
+One should also ensure that terms are valid prior to being passed into the writer; either by validation, or ensuring that valid RDF will always be produced by the application logic producing the terms.
+
+The following code snipped shows how to validate that NamedNodes and Literals are validly formed. Depending on your application you may wish to apply further validation: such as ensuring that nested Quad terms are valid in RDF 1.2, and ensuring that `termTypes` are only occuring in the positions that is valid for RDF 1.1 and RDF 1.2.
+```JavaScript
+const { Transform } = require('stream');
+const { validateIri, IriValidationStrategy } = require('validate-iri');
+const { validators } = require('rdf-validate-datatype');
+const { parse: parseLanguageTag } = require('bcp-47');
+
+function validateTerm(term) {
+  switch (term.termType) {
+  case 'NamedNode': // RDF requires absolute IRIs
+    return validateIri(term.value, IriValidationStrategy.Strict) || null;
+  case 'Literal':
+    if (term.language) {
+      let invalid = false;
+      parseLanguageTag(term.language, { warning: () => { invalid = true; } });
+      return invalid ? new Error(`Invalid language tag "${term.language}"`) : null;
+    }
+    const validate = validators.find(term.datatype);
+    return validate && !validate(term.value)
+      ? new Error(`Invalid value "${term.value}" for datatype ${term.datatype.value}`)
+      : null; // unknown datatypes cannot be judged
+  default:
+    return null;
+  }
+}
+
+const quadStream = fs.createReadStream('data.ttl')
+  .pipe(new N3.StreamParser())
+  .pipe(new Transform({
+    objectMode: true,
+    transform(quad, encoding, done) {
+      const error = validateTerm(quad.subject) || validateTerm(quad.predicate) ||
+                    validateTerm(quad.object) || validateTerm(quad.graph);
+      done(error, error ? undefined : quad); // or: skip/collect instead of failing
+    },
+  }));
+```
+
+
+Parser-level opt-in validation modes covering the term and version dimensions
+are proposed in [#634](https://github.com/rdfjs/N3.js/pull/634).
+
 ### Interface specifications
 The N3.js submodules are compatible with the following [RDF.js](http://rdf.js.org) interfaces:
 
@@ -528,8 +619,7 @@ The N3.js submodules are compatible with the following [RDF.js](http://rdf.js.or
   [`DatasetCore`](https://rdf.js.org/dataset-spec/#datasetcore-interface)
 
 ## License and contributions
-The N3.js library is copyrighted by [Ruben Verborgh](https://ruben.verborgh.org/)
-and released under the [MIT License](https://github.com/rdfjs/N3.js/blob/master/LICENSE.md).
+N3.js is released under the [MIT License](https://github.com/rdfjs/N3.js/blob/master/LICENSE.md).
 
 Contributions are welcome, and bug reports or pull requests are always helpful.
-If you plan to implement a larger feature, it's best to contact me first.
+If you plan to implement a larger feature, it's best to contact us first.
