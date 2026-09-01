@@ -86,6 +86,12 @@ export default class N3Lexer {
     this.comments = !!options.comments;
     // Cache the last tested closing position of long literals
     this._literalClosingPos = 0;
+    // Absolute character offset of the head of `_input` within the document
+    this._offset = 0;
+    // Optional lexical observer and occurrence IDs. IDs are only added to
+    // tokens when the parser needs to correlate lexical and semantic events.
+    this._onToken = options.onToken || null;
+    this._trackTokenIds = !!options.trackTokenIds;
   }
 
   // ## Private methods
@@ -94,6 +100,7 @@ export default class N3Lexer {
   _tokenizeToEnd(callback, inputFinished) {
     // Continue parsing as far as possible; the loop will return eventually
     let input = this._input;
+    const self = this;
     let currentLineLength = input.length;
     while (true) {
       // Count and skip whitespace lines
@@ -103,12 +110,14 @@ export default class N3Lexer {
         if (this.comments && (comment = this._comment.exec(whiteSpaceMatch[0])))
           emitToken('comment', comment[1], '', this._line, whiteSpaceMatch[0].length);
         // Advance the input
+        this._offset += whiteSpaceMatch[0].length;
         input = input.slice(whiteSpaceMatch[0].length);
         currentLineLength = input.length;
         this._line++;
       }
       // Skip whitespace on current line
       if (!whiteSpaceMatch && (whiteSpaceMatch = this._whitespace.exec(input)))
+        this._offset += whiteSpaceMatch[0].length,
         input = input.slice(whiteSpaceMatch[0].length);
 
       // Stop for now if we're at the end
@@ -137,7 +146,7 @@ export default class N3Lexer {
         else if (input[1] === '^') {
           this._previousMarker = '^^';
           // Move to type IRI or prefixed name
-          input = input.slice(2);
+          this._offset += 2, input = input.slice(2);
           if (input[0] !== '<') {
             inconclusive = true;
             break;
@@ -440,7 +449,7 @@ export default class N3Lexer {
       this._previousMarker = type;
 
       // Advance to next part to tokenize
-      input = input.slice(length);
+      this._offset += length, input = input.slice(length);
     }
 
     // Emits the token through the callback
@@ -448,6 +457,15 @@ export default class N3Lexer {
       const start = input ? currentLineLength - input.length : currentLineLength;
       const end = start + length;
       const token = { type, value, prefix, line, start, end };
+      let sourceId;
+      if (self._trackTokenIds || self._onToken)
+        sourceId = self._tokenId++;
+      if (self._onToken)
+        self._onToken(token, self._offset, self._offset + length, sourceId);
+      // Attach the occurrence only after observers return, so they cannot
+      // corrupt the parser's semantic correlation by mutating the token.
+      if (self._trackTokenIds)
+        token.sourceId = sourceId;
       callback(null, token);
       return token;
     }
@@ -540,7 +558,10 @@ export default class N3Lexer {
 
   // ### Strips off any starting UTF BOM mark.
   _readStartingBom(input) {
-    return input.startsWith('\ufeff') ? input.slice(1) : input;
+    if (!input.startsWith('\ufeff'))
+      return input;
+    this._offset++;
+    return input.slice(1);
   }
 
   // ## Public methods
@@ -549,6 +570,8 @@ export default class N3Lexer {
   // The input can be a string or a stream.
   tokenize(input, callback) {
     this._line = 1;
+    this._offset = 0;
+    this._tokenId = 0;
 
     // If the input is a string, continuously emit tokens through the callback until the end
     if (typeof input === 'string') {
