@@ -38,13 +38,13 @@ function tokenRange(input, token) {
 }
 
 export function termRanges(input, term) {
-  return tokenRange(input, term && term[TERM_TOKEN]);
+  return tokenRange(input, term[TERM_TOKEN]);
 }
 
 class TermLocationParser extends N3Parser {
-  constructor(options = {}) {
-    const onLocation = options.onLocation || null;
-    const parserOptions = { ...options, onQuadSpans() {} };
+  constructor(options) {
+    const onLocation = options.onLocation;
+    const parserOptions = { ...options, _trackOffsets: true };
     delete parserOptions.onLocation;
     super(parserOptions);
     this._onQuadSpans = null;
@@ -53,21 +53,18 @@ class TermLocationParser extends N3Parser {
   }
 
   _noteSpan(term, token) {
-    if (term && token && typeof term === 'object')
-      term[TERM_TOKEN] = token;
+    term[TERM_TOKEN] = token;
     return term;
   }
 
   _noteLiteralSpan(literal) {
-    if (this._literalSpan)
-      literal[TERM_TOKEN] = this._literalSpan;
+    literal[TERM_TOKEN] = this._literalSpan;
     return literal;
   }
 
   _emit(subject, predicate, object, graph) {
     const quad = this._factory.quad(subject, predicate, object, graph || this.DEFAULTGRAPH);
-    if (this._onLocation)
-      this._onLocation(quad);
+    this._onLocation(quad);
     this._callback(null, quad);
   }
 }
