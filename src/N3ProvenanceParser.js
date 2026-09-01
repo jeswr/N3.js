@@ -1,22 +1,12 @@
-// **N3ProvenanceParser** wraps N3Parser to track quad *utterances* on the
-// side: a multiset of source occurrences layered over the set of quads.
-//
-// RDF/JS stores are sets of value-equal quads; provenance needs the
-// occurrences.  Rather than slow the store down, this wrapper keeps a
-// Map from a canonical quad key (never object identity — RDF/JS only
-// promises `.equals()`, and N3Store reconstructs quads on read) to the
-// quad's utterances:
-//
-//   {quad, subject: Range[], predicate: Range[], object: Range[], graph: Range[]}
-//
-// Each Range is {start, end} in absolute character offsets (plus
-// {line, column} of the start).  Ranges come in arrays because provenance
-// can be split or synthetic; a position whose term has no source token
-// (e.g. rdf:first in a collection) has an empty array.
-//
-// The underlying parser reports spans through its opt-in `onQuadSpans`
-// option, which costs nothing when unused.
+// **N3ProvenanceParser** consumes a positional location event into one packed
+// origin table. This prototype uses temporary term symbols to transport tokens.
 import N3Parser from './N3Parser';
+import { termToId } from './N3DataFactory';
+
+const TERM_TOKEN = Symbol('n3.sourceToken');
+const TRACKING_ENABLED = Object.freeze({});
+const NO_RANGE = 0xFFFF_FFFF;
+const EMPTY = Object.freeze([]);
 
 export function termKey(term) {
   switch (term.termType) {
@@ -37,64 +27,164 @@ export function termKey(term) {
   }
 }
 
-export function quadKey(quad) {
-  return `${termKey(quad.subject)} ${termKey(quad.predicate)} ${termKey(quad.object)} ${termKey(quad.graph)}`;
+export function quadKey(quad) { return termToId(quad); }
+
+function tokenBounds(input, token) {
+  if (!token)
+    return null;
+  const start = token.offsetStart ?? token.start;
+  let end = token.offsetEnd ?? token.end;
+  while (end > start && /\s/.test(input[end - 1]))
+    end--;
+  return [start, end, token.line];
+}
+
+function clearToken(term) {
+  if (!term || typeof term !== 'object')
+    return;
+  term[TERM_TOKEN] = undefined;
+  if (term.termType === 'Quad') {
+    clearToken(term.subject);
+    clearToken(term.predicate);
+    clearToken(term.object);
+    clearToken(term.graph);
+  }
+}
+
+class LocationEventParser extends N3Parser {
+  constructor(options = {}) {
+    const onLocation = options.onLocation || null;
+    const parserOptions = { ...options, onQuadSpans() {} };
+    delete parserOptions.onLocation;
+    super(parserOptions);
+    this._onQuadSpans = null;
+    this._termSpans = TRACKING_ENABLED;
+    this._onLocation = onLocation;
+  }
+
+  _noteSpan(term, token) {
+    if (term && token && typeof term === 'object')
+      term[TERM_TOKEN] = token;
+    return term;
+  }
+
+  _noteLiteralSpan(literal) {
+    if (this._literalSpan)
+      literal[TERM_TOKEN] = this._literalSpan;
+    return literal;
+  }
+
+  _emit(subject, predicate, object, graph) {
+    const actualGraph = graph || this.DEFAULTGRAPH;
+    const quad = this._factory.quad(subject, predicate, object, actualGraph);
+    if (this._onLocation)
+      this._onLocation(
+        quad,
+        subject && subject[TERM_TOKEN],
+        predicate && predicate[TERM_TOKEN],
+        object && object[TERM_TOKEN],
+        graph && graph[TERM_TOKEN],
+      );
+    this._callback(null, quad);
+  }
 }
 
 export class ProvenanceIndex {
-  constructor() { this._map = new Map(); }
-
-  _add(quad, utterance) {
-    const key = quadKey(quad);
-    if (!this._map.has(key))
-      this._map.set(key, []);
-    this._map.get(key).push(utterance);
+  constructor(input = '', initialCapacity = 1024) {
+    this._input = input;
+    this._rows = new Uint32Array(Math.max(1, initialCapacity) * 12);
+    this._length = 0;
+    this._map = new Map();
+    this._quads = [];
   }
 
-  // ### `get` returns the utterances of a quad (empty array if never uttered)
-  get(quad) { return this._map.get(quadKey(quad)) || []; }
+  _grow() {
+    const rows = new Uint32Array(this._rows.length * 2);
+    rows.set(this._rows);
+    this._rows = rows;
+  }
 
-  // ### `size` is the number of distinct quads uttered
+  _write(offset, token) {
+    const bounds = tokenBounds(this._input, token);
+    if (bounds)
+      this._rows.set(bounds, offset);
+    else
+      this._rows.fill(NO_RANGE, offset, offset + 3);
+  }
+
+  _add(quad, subject, predicate, object, graph) {
+    const id = this._length++, base = id * 12;
+    if (base + 12 > this._rows.length)
+      this._grow();
+    this._write(base, subject);
+    this._write(base + 3, predicate);
+    this._write(base + 6, object);
+    this._write(base + 9, graph);
+    this._quads.push(quad);
+
+    const key = quadKey(quad), previous = this._map.get(key);
+    if (previous === undefined)
+      this._map.set(key, id);
+    else if (typeof previous === 'number')
+      this._map.set(key, [previous, id]);
+    else
+      previous.push(id);
+  }
+
+  _finish() {
+    this._rows = this._rows.slice(0, this._length * 12);
+    this._input = null;
+  }
+
+  _utterance(id) {
+    const base = id * 12, rows = this._rows;
+    function range(offset) {
+      return rows[offset] === NO_RANGE ? EMPTY :
+        [{ start: rows[offset], end: rows[offset + 1], line: rows[offset + 2] }];
+    }
+    return {
+      quad: this._quads[id],
+      subject: range(base),
+      predicate: range(base + 3),
+      object: range(base + 6),
+      graph: range(base + 9),
+    };
+  }
+
+  get(quad) {
+    const ids = this._map.get(quadKey(quad));
+    if (ids === undefined)
+      return [];
+    return typeof ids === 'number' ? [this._utterance(ids)] : ids.map(id => this._utterance(id));
+  }
+
   get size() { return this._map.size; }
+  get utteranceCount() { return this._length; }
 
-  [Symbol.iterator]() { return this._map.values(); }
+  *[Symbol.iterator]() {
+    for (const ids of this._map.values())
+      yield typeof ids === 'number' ? [this._utterance(ids)] : ids.map(id => this._utterance(id));
+  }
 }
 
 export default class N3ProvenanceParser {
-  constructor(options = {}) {
-    this._options = options;
-  }
+  constructor(options = {}) { this._options = options; }
 
-  // ### `parse` synchronously parses `input`, returning
-  // `{quads, provenance, prefixes}`
   parse(input) {
-    function absolute(span) {
-      if (!span)
-        return [];
-      const start = span.start;
-      let end = span.end;
-      // some lexer token lengths include trailing whitespace; trim it
-      while (end > start && /\s/.test(input[end - 1]))
-        end--;
-      return [{ start, end, line: span.line }];
-    }
-
-    const provenance = new ProvenanceIndex();
-    const parser = new N3Parser({
+    const provenance = new ProvenanceIndex(input, Math.ceil(input.length / 32));
+    const parser = new LocationEventParser({
       ...this._options,
-      // fires synchronously from _emit during the synchronous parse below
-      onQuadSpans: (quad, spans) => {
-        provenance._add(quad, {
-          quad,
-          subject:   absolute(spans.subject),
-          predicate: absolute(spans.predicate),
-          object:    absolute(spans.object),
-          graph:     absolute(spans.graph),
-        });
-      },
+      onLocation: (quad, subject, predicate, object, graph) =>
+        provenance._add(quad, subject, predicate, object, graph),
     });
     const quads = parser.parse(input);
-    const prefixes = parser._prefixes;
-    return { quads, provenance, prefixes };
+    for (const quad of quads) {
+      clearToken(quad.subject);
+      clearToken(quad.predicate);
+      clearToken(quad.object);
+      clearToken(quad.graph);
+    }
+    provenance._finish();
+    return { quads, provenance, prefixes: parser._prefixes };
   }
 }
