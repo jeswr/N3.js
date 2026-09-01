@@ -184,6 +184,10 @@ export class ProvenanceIndex {
     return this._map.size;
   }
 
+  get utteranceCount() {
+    return this._length;
+  }
+
   *[Symbol.iterator]() {
     for (const occurrences of this._map.values())
       yield this._materializeAll(occurrences);

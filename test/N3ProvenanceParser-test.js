@@ -1,4 +1,4 @@
-import { Lexer, Parser, Store, ProvenanceParser, ProvenanceIndex, termKey, DataFactory } from '../src';
+import { Lexer, Parser, Store, ProvenanceParser, ProvenanceIndex, TokenLog, termKey, DataFactory } from '../src';
 
 const BASE_IRI = 'http://example.org/';
 
@@ -19,6 +19,14 @@ describe('ProvenanceParser', () => {
       expect(utts).toHaveLength(2);
       expect(slice(doc, utts[0].subject[0])).toBe('<s>');
       expect(utts[0].subject[0].start).not.toBe(utts[1].subject[0].start);
+    });
+
+    it('stores a compact list after the second duplicate utterance', () => {
+      const doc = '<s> <p> <o> .\n<s> <p> <o> .\n<s> <p> <o> .';
+      const { quads, provenance } = parse(doc);
+      expect(provenance.get(quads[0])).toHaveLength(3);
+      expect(provenance.utteranceCount).toBe(3);
+      expect([...provenance][0]).toHaveLength(3);
     });
 
     it('reuses the subject span across a predicateObjectList', () => {
@@ -135,6 +143,43 @@ describe('ProvenanceParser', () => {
         .tokenize('<http://s> <http://p> <http://o> .');
       expect(tokens.every(token => !Object.hasOwn(token, 'sourceId'))).toBe(true);
     });
+
+    it('forwards both event streams supplied to the provenance wrapper', () => {
+      const tokenIds = [], quadOrigins = [];
+      parse('<s> <p> <o> .', {
+        onToken(token, start, end, sourceId) { tokenIds.push(sourceId); },
+        onQuadOrigin(quad, subject, predicate, object, graph) {
+          quadOrigins.push([subject, predicate, object, graph]);
+        },
+      });
+      expect(tokenIds).toEqual([0, 1, 2, 3, 4]);
+      expect(quadOrigins).toEqual([[0, 1, 2, -1]]);
+    });
+
+    it('grows its compact token and origin tables', () => {
+      const tokens = new TokenLog('a b', 1);
+      tokens._add({ type: 'word', line: 1 }, 0, 1, 0);
+      tokens._add({ type: 'word', line: 1 }, 2, 3, 1);
+      expect(() => tokens._add({ type: 'word', line: 1 }, 0, 1, 3))
+        .toThrow(/Unexpected token occurrence ID/);
+      expect(tokens.range(-1)).toEqual([]);
+      expect(tokens.range(99)).toEqual([]);
+      expect(tokens.token(-1)).toBeNull();
+      expect(tokens.lexeme(-1)).toBe('');
+      tokens._finish();
+      expect([...tokens]).toHaveLength(2);
+
+      const provenance = new ProvenanceIndex(tokens, 1);
+      const quad = DataFactory.quad(
+        DataFactory.namedNode('urn:s'),
+        DataFactory.namedNode('urn:p'),
+        DataFactory.namedNode('urn:o'),
+      );
+      for (let occurrence = 0; occurrence < 17; occurrence++)
+        provenance._add(quad, 0, 0, 0, -1);
+      provenance._finish();
+      expect(provenance.get(quad)).toHaveLength(17);
+    });
   });
 
   describe('value-keyed lookup', () => {
@@ -232,6 +277,46 @@ describe('ProvenanceParser', () => {
       expect(termKey(DataFactory.variable('v'))).toBe('?v');
       expect(termKey(DataFactory.defaultGraph())).toBe('');
       expect(() => termKey({ termType: 'Unheard' })).toThrow(/unknown termType/);
+    });
+
+    it('carries origins through formula and triple-term list items', () => {
+      const docs = [
+        '( { <a> <b> <c> } ) <p> <o> .',
+        '<s> <p> ( { <a> <b> <c> } ) .',
+        '( <<( <a> <b> <c> )>> ) <p> <o> .',
+        '<s> ( <<( <a> <b> <c> )>> ) <o> .',
+        '<s> <p> ( <<( <a> <b> <c> )>> ) .',
+        '<s> <p> ( << <a> <b> <c> >> ) .',
+      ];
+      for (const doc of docs)
+        expect(parse(doc, { format: 'text/n3' }).quads.length).toBeGreaterThan(0);
+    });
+
+    it('carries origins when an IRI replaces a property-list placeholder', () => {
+      const docs = [
+        '[id <s> <p> <o>] .',
+        '<s> [id <p> <inner-p> <inner-o>] <o> .',
+        '<s> <p> [id <o> <inner-p> <inner-o>] .',
+      ];
+      for (const doc of docs)
+        expect(parse(doc, { format: 'text/n3' }).quads.length).toBeGreaterThan(0);
+    });
+
+    it('keys every supported RDF/JS term shape', () => {
+      expect(termKey(DataFactory.namedNode('urn:n'))).toBe('<urn:n>');
+      expect(termKey(DataFactory.blankNode('b'))).toBe('_:b');
+      expect(termKey(DataFactory.literal('plain'))).toBe('"plain"');
+      expect(termKey(DataFactory.literal('hello', 'en'))).toBe('"hello"@en');
+      expect(termKey(DataFactory.literal('hello', { language: 'en', direction: 'ltr' })))
+        .toBe('"hello"@en--ltr');
+      expect(termKey(DataFactory.literal('1', DataFactory.namedNode('urn:type'))))
+        .toBe('"1"^^<urn:type>');
+      expect(termKey(DataFactory.literal('\\"\n\r'))).toBe('"\\\\\\"\\n\\r"');
+      expect(termKey(DataFactory.quad(
+        DataFactory.namedNode('urn:s'),
+        DataFactory.namedNode('urn:p'),
+        DataFactory.namedNode('urn:o'),
+      ))).toBe('<<(<urn:s> <urn:p> <urn:o>)>>');
     });
 
     it('gives rdf:nil subjects (empty collection) no span', () => {

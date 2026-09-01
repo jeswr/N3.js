@@ -464,7 +464,7 @@ export default class N3Parser {
         this._saveContext('formula', this._graph, this._subject,
                           this._graph = this._noteSpan(this._factory.blankNode(), token), null,
                           parentGraphOrigin, parentSubjectOrigin, token.sourceId, NO_TOKEN);
-        return this._readInFormulaContext;
+        return this._readSubject;
       }
       return this._readEntity(token);
     case 'blank':
@@ -783,10 +783,6 @@ export default class N3Parser {
         if (parent.predicate === null) {
           parent.subject = list;
           if (this._onQuadOrigin) parent.subjectOrigin = listOrigin;
-        }
-        else if (parent.object === null) {
-          parent.predicate = list;
-          if (this._onQuadOrigin) parent.predicateOrigin = listOrigin;
         }
         else {
           parent.object = list;
