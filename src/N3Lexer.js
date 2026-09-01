@@ -86,6 +86,11 @@ export default class N3Lexer {
     this.comments = !!options.comments;
     // Cache the last tested closing position of long literals
     this._literalClosingPos = 0;
+    // Absolute character offset of the head of `_input` within the document
+    this._offset = 0;
+    // Only annotate tokens with absolute offsets when asked (keeps the
+    // default token shape unchanged)
+    this._trackOffsets = !!options.trackOffsets;
   }
 
   // ## Private methods
@@ -94,6 +99,7 @@ export default class N3Lexer {
   _tokenizeToEnd(callback, inputFinished) {
     // Continue parsing as far as possible; the loop will return eventually
     let input = this._input;
+    const self = this;
     let currentLineLength = input.length;
     while (true) {
       // Count and skip whitespace lines
@@ -103,12 +109,14 @@ export default class N3Lexer {
         if (this.comments && (comment = this._comment.exec(whiteSpaceMatch[0])))
           emitToken('comment', comment[1], '', this._line, whiteSpaceMatch[0].length);
         // Advance the input
+        this._offset += whiteSpaceMatch[0].length;
         input = input.slice(whiteSpaceMatch[0].length);
         currentLineLength = input.length;
         this._line++;
       }
       // Skip whitespace on current line
       if (!whiteSpaceMatch && (whiteSpaceMatch = this._whitespace.exec(input)))
+        this._offset += whiteSpaceMatch[0].length,
         input = input.slice(whiteSpaceMatch[0].length);
 
       // Stop for now if we're at the end
@@ -137,7 +145,7 @@ export default class N3Lexer {
         else if (input[1] === '^') {
           this._previousMarker = '^^';
           // Move to type IRI or prefixed name
-          input = input.slice(2);
+          this._offset += 2, input = input.slice(2);
           if (input[0] !== '<') {
             inconclusive = true;
             break;
@@ -440,7 +448,7 @@ export default class N3Lexer {
       this._previousMarker = type;
 
       // Advance to next part to tokenize
-      input = input.slice(length);
+      this._offset += length, input = input.slice(length);
     }
 
     // Emits the token through the callback
@@ -448,6 +456,11 @@ export default class N3Lexer {
       const start = input ? currentLineLength - input.length : currentLineLength;
       const end = start + length;
       const token = { type, value, prefix, line, start, end };
+      // absolute document offsets (the token begins at the unconsumed head)
+      if (self._trackOffsets) {
+        token.offsetStart = self._offset;
+        token.offsetEnd = self._offset + length;
+      }
       callback(null, token);
       return token;
     }
