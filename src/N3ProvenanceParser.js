@@ -40,8 +40,6 @@ function tokenBounds(input, token) {
 }
 
 function clearToken(term) {
-  if (!term || typeof term !== 'object')
-    return;
   term[TERM_TOKEN] = undefined;
   if (term.termType === 'Quad') {
     clearToken(term.subject);
@@ -52,9 +50,9 @@ function clearToken(term) {
 }
 
 class LocationEventParser extends N3Parser {
-  constructor(options = {}) {
-    const onLocation = options.onLocation || null;
-    const parserOptions = { ...options, onQuadSpans() {} };
+  constructor(options) {
+    const onLocation = options.onLocation;
+    const parserOptions = { ...options, _trackOffsets: true };
     delete parserOptions.onLocation;
     super(parserOptions);
     this._onQuadSpans = null;
@@ -63,28 +61,25 @@ class LocationEventParser extends N3Parser {
   }
 
   _noteSpan(term, token) {
-    if (term && token && typeof term === 'object')
-      term[TERM_TOKEN] = token;
+    term[TERM_TOKEN] = token;
     return term;
   }
 
   _noteLiteralSpan(literal) {
-    if (this._literalSpan)
-      literal[TERM_TOKEN] = this._literalSpan;
+    literal[TERM_TOKEN] = this._literalSpan;
     return literal;
   }
 
   _emit(subject, predicate, object, graph) {
     const actualGraph = graph || this.DEFAULTGRAPH;
     const quad = this._factory.quad(subject, predicate, object, actualGraph);
-    if (this._onLocation)
-      this._onLocation(
-        quad,
-        subject && subject[TERM_TOKEN],
-        predicate && predicate[TERM_TOKEN],
-        object && object[TERM_TOKEN],
-        graph && graph[TERM_TOKEN],
-      );
+    this._onLocation(
+      quad,
+      subject[TERM_TOKEN],
+      predicate[TERM_TOKEN],
+      object[TERM_TOKEN],
+      graph && graph[TERM_TOKEN],
+    );
     this._callback(null, quad);
   }
 }
