@@ -15,12 +15,8 @@ export default class N3Parser {
     options = options || {};
     this._setBase(options.baseIRI);
     options.factory && initDataFactory(this, options.factory);
-    // Opt-in source-span tracking: after each emitted quad, invoke
-    // onQuadSpans(quad, {subject, predicate, object, graph}) with the
-    // lexer's {line, start, end} for each position's source token (null for
-    // synthetic terms without one).  Zero cost when the option is absent.
-    this._onQuadSpans = options.onQuadSpans || null;
-    this._termSpans = this._onQuadSpans ? new WeakMap() : null;
+    // Subclasses can opt into tokens carrying document-relative offsets.
+    this._trackTermLocations = !!options._trackTermLocations;
 
     // Set supported features depending on the format
     const format = (typeof options.format === 'string') ?
@@ -45,7 +41,7 @@ export default class N3Parser {
       this._resolveRelativeIRI = iri => { return null; };
     this._blankNodePrefix = typeof options.blankNodePrefix !== 'string' ? '' :
                               options.blankNodePrefix.replace(/^(?!_:)/, '_:');
-    this._lexer = options.lexer || new N3Lexer({ lineMode: isLineMode, n3: isN3, isImpliedBy: this._isImpliedBy, trackOffsets: !!(options.onQuadSpans || options._trackOffsets) });
+    this._lexer = options.lexer || new N3Lexer({ lineMode: isLineMode, n3: isN3, isImpliedBy: this._isImpliedBy, trackOffsets: this._trackTermLocations });
     // Disable explicit quantifiers by default
     this._explicitQuantifiers = !!options.explicitQuantifiers;
     // Disable parsing of unsupported versions by default
@@ -314,7 +310,7 @@ export default class N3Parser {
 
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
-        if (this._termSpans !== null) this._literalSpan = { line: token.line, start: token.offsetStart, end: token.offsetEnd };
+        if (this._trackTermLocations) this._literalToken = token;
         return this._completeSubjectLiteral;
       }
       else {
@@ -385,7 +381,7 @@ export default class N3Parser {
 
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
-        if (this._termSpans !== null) this._literalSpan = { line: token.line, start: token.offsetStart, end: token.offsetEnd };
+        if (this._trackTermLocations) this._literalToken = token;
         return this._completePredicateLiteral;
       }
       else
@@ -448,7 +444,7 @@ export default class N3Parser {
       // Regular literal, can still get a datatype or language
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
-        if (this._termSpans !== null) this._literalSpan = { line: token.line, start: token.offsetStart, end: token.offsetEnd };
+        if (this._trackTermLocations) this._literalToken = token;
         return this._readDataTypeOrLang;
       }
       // Pre-datatyped string literal (prefix stores the datatype)
@@ -664,7 +660,7 @@ export default class N3Parser {
       // Regular literal, can still get a datatype or language
       if (token.prefix.length === 0) {
         this._literalValue = token.value;
-        if (this._termSpans !== null) this._literalSpan = { line: token.line, start: token.offsetStart, end: token.offsetEnd };
+        if (this._trackTermLocations) this._literalToken = token;
         next = this._readListItemDataTypeOrLang;
       }
       // Pre-datatyped string literal (prefix stores the datatype)
@@ -782,14 +778,14 @@ export default class N3Parser {
       if (datatype.value === namespaces.rdf.langString || datatype.value === namespaces.rdf.dirLangString) {
         return this._error('Detected illegal (directional) languaged-tagged string with explicit datatype', token);
       }
-      literal = this._noteLiteralSpan(this._factory.literal(this._literalValue, datatype));
+      literal = this._noteLiteralToken(this._factory.literal(this._literalValue, datatype));
       token = null;
       break;
     // Create a language-tagged string
     case 'langcode':
       if (token.value.split('-').some(t => t.length > 8))
         return this._error('Detected language tag with subtag longer than 8 characters', token);
-      literal = this._noteLiteralSpan(this._factory.literal(this._literalValue, token.value));
+      literal = this._noteLiteralToken(this._factory.literal(this._literalValue, token.value));
       this._literalLanguage = token.value;
       token = null;
       // Save state for a possible direction tag
@@ -798,7 +794,7 @@ export default class N3Parser {
       break;
     // Create a simple string literal by default
     default:
-      literal = this._noteLiteralSpan(this._factory.literal(this._literalValue));
+      literal = this._noteLiteralToken(this._factory.literal(this._literalValue));
     }
 
     return { token, literal, readCb };
@@ -809,7 +805,7 @@ export default class N3Parser {
     const component = this._literalComponent, listItem = this._literalListItem;
     // Attempt to read a dircode
     if (token.type === 'dircode') {
-      const term = this._noteLiteralSpan(this._factory.literal(this._literalValue, { language: this._literalLanguage, direction: token.value }));
+      const term = this._noteLiteralToken(this._factory.literal(this._literalValue, { language: this._literalLanguage, direction: token.value }));
       if (component === 'subject')
         this._subject = term;
       else if (component === 'predicate')
@@ -1425,28 +1421,16 @@ export default class N3Parser {
 
   // ### `_emit` sends a quad through the callback
   _emit(subject, predicate, object, graph) {
-    const quad = this._factory.quad(subject, predicate, object, graph || this.DEFAULTGRAPH);
-    if (this._onQuadSpans)
-      this._onQuadSpans(quad, {
-        subject:   this._termSpans.get(subject) || null,
-        predicate: this._termSpans.get(predicate) || null,
-        object:    this._termSpans.get(object) || null,
-        graph:     graph && this._termSpans.get(graph) || null,
-      });
-    this._callback(null, quad);
+    this._callback(null, this._factory.quad(subject, predicate, object, graph || this.DEFAULTGRAPH));
   }
 
-  // ### `_noteLiteralSpan` records the pending string token's span
-  _noteLiteralSpan(literal) {
-    if (this._termSpans !== null && this._literalSpan)
-      this._termSpans.set(literal, this._literalSpan);
+  // ### `_noteLiteralToken` lets location-aware subclasses retain a string token
+  _noteLiteralToken(literal) {
     return literal;
   }
 
-  // ### `_noteSpan` records a term's source token span when tracking is on
-  _noteSpan(term, token) {
-    if (this._termSpans !== null && term && token && typeof term === 'object')
-      this._termSpans.set(term, { line: token.line, start: token.offsetStart, end: token.offsetEnd });
+  // ### `_noteSpan` lets location-aware subclasses associate a term with a token
+  _noteSpan(term) {
     return term;
   }
 

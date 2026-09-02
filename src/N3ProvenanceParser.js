@@ -4,7 +4,6 @@ import N3Parser from './N3Parser';
 import { termToId } from './N3DataFactory';
 
 export const TERM_TOKEN = Symbol('n3.sourceToken');
-const TRACKING_ENABLED = Object.freeze({});
 
 export function termKey(term) {
   switch (term.termType) {
@@ -30,8 +29,8 @@ export function quadKey(quad) { return termToId(quad); }
 function tokenRange(input, token) {
   if (!token)
     return [];
-  const start = token.offsetStart ?? token.start;
-  let end = token.offsetEnd ?? token.end;
+  const start = token.offsetStart;
+  let end = token.offsetEnd;
   while (end > start && /\s/.test(input[end - 1]))
     end--;
   return [{ start, end, line: token.line }];
@@ -44,11 +43,9 @@ export function termRanges(input, term) {
 class TermLocationParser extends N3Parser {
   constructor(options) {
     const onLocation = options.onLocation;
-    const parserOptions = { ...options, _trackOffsets: true };
+    const parserOptions = { ...options, _trackTermLocations: true };
     delete parserOptions.onLocation;
     super(parserOptions);
-    this._onQuadSpans = null;
-    this._termSpans = TRACKING_ENABLED;
     this._onLocation = onLocation;
   }
 
@@ -57,8 +54,8 @@ class TermLocationParser extends N3Parser {
     return term;
   }
 
-  _noteLiteralSpan(literal) {
-    literal[TERM_TOKEN] = this._literalSpan;
+  _noteLiteralToken(literal) {
+    literal[TERM_TOKEN] = this._literalToken;
     return literal;
   }
 

@@ -121,7 +121,7 @@ describe('ProvenanceParser', () => {
     });
 
     // Numbers and booleans reach the parser as a single `literal` token whose
-    // prefix already holds the datatype, so they bypass the _literalSpan dance.
+    // prefix already holds the datatype, so they bypass the pending literal-token path.
     it('spans pre-datatyped object literals', () => {
       const doc = '<s> <p> 42, 1.5e0, true .';
       const { quads, provenance } = parse(doc);
@@ -192,33 +192,7 @@ describe('ProvenanceParser', () => {
     });
   });
 
-  describe('the onQuadSpans option', () => {
-    it('reports source spans directly from the base parser', () => {
-      const events = [];
-      new Parser({
-        baseIRI: BASE_IRI,
-        onQuadSpans(quad, spans) { events.push({ quad, spans }); },
-      }).parse('<s> <p> "value" .');
-      expect(events).toHaveLength(1);
-      expect(events[0].spans).toMatchObject({
-        subject: { start: 0, end: 4, line: 1 },
-        predicate: { start: 4, end: 8, line: 1 },
-        object: { start: 8, end: 15, line: 1 },
-        graph: null,
-      });
-
-      const synthetic = [];
-      new Parser({ onQuadSpans(quad, spans) { synthetic.push(spans); } }).parse('() a () .');
-      expect(synthetic[0]).toEqual({ subject: null, predicate: null, object: null, graph: null });
-
-      const namedGraph = [];
-      new Parser({
-        format: 'application/trig',
-        onQuadSpans(quad, spans) { namedGraph.push(spans); },
-      }).parse('<g> { <s> <p> <o> }');
-      expect(namedGraph[0].graph).toMatchObject({ start: 0, end: 4, line: 1 });
-    });
-
+  describe('term-symbol tracking', () => {
     it('does not change what the parser emits', () => {
       const doc = '@prefix ex: <http://ex.example/>.\nex:s ex:p [ ex:q (1 2) ], "x"@en--ltr .';
       // anonymous blank node labels come from a global counter, so compare
