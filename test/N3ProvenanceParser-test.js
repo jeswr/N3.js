@@ -73,8 +73,7 @@ describe('ProvenanceParser', () => {
       const allocatedIds = entityIndex._id;
       const quadId = entityIndex._termToNumericId(quads[0]);
       expect(quadId).toEqual(expect.any(Number));
-      expect(provenance._quadIds).toEqual([quadId]);
-      expect(provenance._quadOccurrences[quadId]).toBe(0);
+      expect(provenance._quadOccurrences.get(quadId)).toBe(0);
 
       const store = new Store({ entityIndex });
       store.addQuads(quads);
