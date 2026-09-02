@@ -1,13 +1,21 @@
 import { Parser, Store, ProvenanceParser, ProvenanceIndex, EntityIndex, DataFactory } from '../src';
-import { TERM_TOKEN, termRanges } from '../src/N3ProvenanceParser';
 
 const BASE_IRI = 'http://example.org/';
 
 function parse(doc, options = {}) {
   return new ProvenanceParser({ baseIRI: BASE_IRI, blankNodePrefix: '', ...options }).parse(doc);
 }
-function slice(doc, r) {
-  return doc.slice(r.start, r.end);
+function offset(doc, position) {
+  const newline = /\r\n|\r|\n/g;
+  let lineStart = 0;
+  for (let line = 1; line < position.line; line++) {
+    const match = newline.exec(doc);
+    lineStart = match.index + match[0].length;
+  }
+  return lineStart + position.column;
+}
+function slice(doc, range) {
+  return doc.slice(offset(doc, range.start), offset(doc, range.end));
 }
 
 describe('ProvenanceParser', () => {
@@ -19,7 +27,7 @@ describe('ProvenanceParser', () => {
       const utts = provenance.get(quads[0]);
       expect(utts).toHaveLength(2);
       expect(slice(doc, utts[0].subject[0])).toBe('<s>');
-      expect(utts[0].subject[0].start).not.toBe(utts[1].subject[0].start);
+      expect(utts[0].subject[0].start).not.toEqual(utts[1].subject[0].start);
     });
 
     it('stores a compact list after the second duplicate utterance', () => {
@@ -37,7 +45,7 @@ describe('ProvenanceParser', () => {
       const [u2] = provenance.get(quads[1]);
       expect(u1.subject).toEqual(u2.subject);
       expect(slice(doc, u2.predicate[0])).toBe('<p2>');
-      expect(u2.predicate[0].line).toBe(2);
+      expect(u2.predicate[0].start.line).toBe(2);
     });
 
     it.each([
@@ -48,7 +56,7 @@ describe('ProvenanceParser', () => {
       const doc = `<s> <p> <o> .${newline}  <s2> <p2> <o2> .`;
       const { quads, provenance } = parse(doc);
       const [utterance] = provenance.get(quads[1]);
-      expect(utterance.subject[0].start).toBe(doc.indexOf('<s2>'));
+      expect(utterance.subject[0].start).toEqual({ line: 2, column: 2 });
       expect(slice(doc, utterance.subject[0])).toBe('<s2>');
     });
 
@@ -60,14 +68,19 @@ describe('ProvenanceParser', () => {
       const lexicalLiteral = `"""first${newline}second"""`;
       const doc = `<s> <p> ${lexicalLiteral} .`;
       const { quads, provenance } = parse(doc);
-      expect(slice(doc, provenance.get(quads[0])[0].object[0])).toBe(lexicalLiteral);
+      const [location] = provenance.get(quads[0])[0].object;
+      expect(location).toEqual({
+        start: { line: 1, column: 8 },
+        end: { line: 2, column: 9 },
+      });
+      expect(slice(doc, location)).toBe(lexicalLiteral);
     });
 
     it('accounts for a byte-order mark when converting line positions', () => {
       const doc = '\uFEFF<s> <p> <o> .';
       const { quads, provenance } = parse(doc);
       const [subject] = provenance.get(quads[0])[0].subject;
-      expect(subject.start).toBe(1);
+      expect(subject.start).toEqual({ line: 1, column: 1 });
       expect(slice(doc, subject)).toBe('<s>');
     });
 
@@ -219,12 +232,6 @@ describe('ProvenanceParser', () => {
   });
 
   describe('term-symbol tracking', () => {
-    it('derives ranges directly from an annotated term', () => {
-      const doc = '<s> <p> <o> .';
-      const { quads } = parse(doc);
-      expect(termRanges(doc, quads[0].subject)).toEqual([{ start: 0, end: 3, line: 1 }]);
-    });
-
     it('keeps the opening token active for delayed literal construction', () => {
       const doc = '<s> <p> "typed"^^<type>, "directed"@en--ltr, 42 .';
       const { quads, provenance } = parse(doc);
@@ -236,9 +243,9 @@ describe('ProvenanceParser', () => {
       const { quads } = parse('<s> <p> <o> ~ .');
       const reifies = quads.find(q => q.predicate.value.endsWith('#reifies'));
       expect(reifies).toBeDefined();
-      expect(Object.prototype.hasOwnProperty.call(reifies, TERM_TOKEN)).toBe(false);
-      expect(Object.prototype.hasOwnProperty.call(reifies.subject, TERM_TOKEN)).toBe(false);
-      expect(Object.prototype.hasOwnProperty.call(reifies.object, TERM_TOKEN)).toBe(false);
+      expect(Object.getOwnPropertySymbols(reifies)).toHaveLength(0);
+      expect(Object.getOwnPropertySymbols(reifies.subject)).toHaveLength(0);
+      expect(Object.getOwnPropertySymbols(reifies.object)).toHaveLength(0);
     });
 
     it('preserves custom factory receivers and method arities', () => {

@@ -438,7 +438,7 @@ export default class N3Lexer {
 
       // Emit the parsed token
       const length = matchLength || match[0].length;
-      const token = emitToken(type, value, prefix, line, length);
+      const token = emitToken(type, value, prefix, line, length, this._line, finalLineLength);
       this.previousToken = token;
       this._previousMarker = type;
 
@@ -449,10 +449,21 @@ export default class N3Lexer {
     }
 
     // Emits the token through the callback
-    function emitToken(type, value, prefix, line, length) {
+    function emitToken(type, value, prefix, line, length, endLine, finalLineLength) {
       const start = input ? currentLineLength - input.length : currentLineLength;
-      const end = start + length;
+      let end = start + length;
+      if (endLine !== undefined) {
+        if (finalLineLength)
+          end = finalLineLength;
+        else {
+          let char;
+          while ((char = input.charCodeAt(end - start - 1)) === 32 || char === 9)
+            end--;
+        }
+      }
       const token = { type, value, prefix, line, start, end };
+      if (endLine !== undefined && endLine !== line)
+        token.endLine = endLine;
       callback(null, token);
       return token;
     }
@@ -547,7 +558,11 @@ export default class N3Lexer {
 
   // ### Strips off any starting UTF BOM mark.
   _readStartingBom(input) {
-    return input.startsWith('\ufeff') ? input.slice(1) : input;
+    if (input.startsWith('\ufeff')) {
+      this._linePosition = 1;
+      return input.slice(1);
+    }
+    return input;
   }
 
   // ## Public methods
