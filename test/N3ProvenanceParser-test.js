@@ -26,8 +26,8 @@ describe('ProvenanceParser', () => {
       expect(quads).toHaveLength(2);
       const utts = provenance.get(quads[0]);
       expect(utts).toHaveLength(2);
-      expect(slice(doc, utts[0].subject[0])).toBe('<s>');
-      expect(utts[0].subject[0].start).not.toEqual(utts[1].subject[0].start);
+      expect(slice(doc, utts[0].subject)).toBe('<s>');
+      expect(utts[0].subject.start).not.toEqual(utts[1].subject.start);
     });
 
     it('stores occurrence data directly for duplicate utterances', () => {
@@ -37,7 +37,7 @@ describe('ProvenanceParser', () => {
       const occurrences = Object.values(provenance._quadOccurrences)[0];
       expect(occurrences).toHaveLength(3);
       expect(occurrences[0]).not.toHaveProperty('quad');
-      expect(slice(doc, occurrences[0].subject[0])).toBe('<s>');
+      expect(slice(doc, occurrences[0].subject)).toBe('<s>');
     });
 
     it('reuses the subject span across a predicateObjectList', () => {
@@ -46,8 +46,8 @@ describe('ProvenanceParser', () => {
       const [u1] = provenance.get(quads[0]);
       const [u2] = provenance.get(quads[1]);
       expect(u1.subject).toEqual(u2.subject);
-      expect(slice(doc, u2.predicate[0])).toBe('<p2>');
-      expect(u2.predicate[0].start.line).toBe(2);
+      expect(slice(doc, u2.predicate)).toBe('<p2>');
+      expect(u2.predicate.start.line).toBe(2);
     });
 
     it.each([
@@ -58,8 +58,8 @@ describe('ProvenanceParser', () => {
       const doc = `<s> <p> <o> .${newline}  <s2> <p2> <o2> .`;
       const { quads, provenance } = parse(doc);
       const [utterance] = provenance.get(quads[1]);
-      expect(utterance.subject[0].start).toEqual({ line: 2, column: 2 });
-      expect(slice(doc, utterance.subject[0])).toBe('<s2>');
+      expect(utterance.subject.start).toEqual({ line: 2, column: 2 });
+      expect(slice(doc, utterance.subject)).toBe('<s2>');
     });
 
     it.each([
@@ -70,7 +70,7 @@ describe('ProvenanceParser', () => {
       const lexicalLiteral = `"""first${newline}second"""`;
       const doc = `<s> <p> ${lexicalLiteral} .`;
       const { quads, provenance } = parse(doc);
-      const [location] = provenance.get(quads[0])[0].object;
+      const location = provenance.get(quads[0])[0].object;
       expect(location).toEqual({
         start: { line: 1, column: 8 },
         end: { line: 2, column: 9 },
@@ -81,7 +81,7 @@ describe('ProvenanceParser', () => {
     it('accounts for a byte-order mark when converting line positions', () => {
       const doc = '\uFEFF<s> <p> <o> .';
       const { quads, provenance } = parse(doc);
-      const [subject] = provenance.get(quads[0])[0].subject;
+      const subject = provenance.get(quads[0])[0].subject;
       expect(subject.start).toEqual({ line: 1, column: 1 });
       expect(slice(doc, subject)).toBe('<s>');
     });
@@ -91,15 +91,15 @@ describe('ProvenanceParser', () => {
       const { quads, provenance } = parse(doc);
       const inner = quads.find(q => q.predicate.value === `${BASE_IRI}p`);
       const [u] = provenance.get(inner);
-      expect(slice(doc, u.subject[0])).toBe('[');
-      expect(slice(doc, u.object[0])).toBe('<o>');
+      expect(slice(doc, u.subject)).toBe('[');
+      expect(slice(doc, u.object)).toBe('<o>');
     });
 
     it('spans literals, including language-tagged ones', () => {
       const doc = '<s> <p> "hello"@en .';
       const { quads, provenance } = parse(doc);
       const [u] = provenance.get(quads[0]);
-      expect(slice(doc, u.object[0])).toBe('"hello"');
+      expect(slice(doc, u.object)).toBe('"hello"');
     });
   });
 
@@ -134,7 +134,7 @@ describe('ProvenanceParser', () => {
       const doc = '<g> { <s> <p> <o> }';
       const { quads, provenance } = parse(doc, { format: 'application/trig' });
       const [u] = provenance.get(quads[0]);
-      expect(slice(doc, u.graph[0])).toBe('<g>');
+      expect(slice(doc, u.graph)).toBe('<g>');
     });
   });
 
@@ -144,10 +144,10 @@ describe('ProvenanceParser', () => {
       const { quads, provenance } = parse(doc);
       const reifies = quads.find(q => q.predicate.value.endsWith('#reifies'));
       const [u] = provenance.get(reifies);
-      expect(slice(doc, u.subject[0])).toBe('<r>');
+      expect(slice(doc, u.subject)).toBe('<r>');
       const annot = quads.find(q => q.predicate.value === `${BASE_IRI}a`);
       const [ua] = provenance.get(annot);
-      expect(slice(doc, ua.object[0])).toBe('<b>');
+      expect(slice(doc, ua.object)).toBe('<b>');
     });
   });
 
@@ -156,8 +156,8 @@ describe('ProvenanceParser', () => {
       const doc = '<s> a <C> .';
       const { quads, provenance } = parse(doc);
       const [u] = provenance.get(quads[0]);
-      expect(u.predicate).toEqual([]);
-      expect(slice(doc, u.object[0])).toBe('<C>');
+      expect(u.predicate).toBeNull();
+      expect(slice(doc, u.object)).toBe('<C>');
     });
 
     it('spans language-tagged literals inside collections', () => {
@@ -165,21 +165,21 @@ describe('ProvenanceParser', () => {
       const { quads, provenance } = parse(doc);
       const first = quads.find(q => q.predicate.value.endsWith('#first'));
       const [u] = provenance.get(first);
-      expect(slice(doc, u.object[0])).toBe('"x"');
+      expect(slice(doc, u.object)).toBe('"x"');
     });
 
     it('spans subject literals in N3 mode', () => {
       const doc = '"s" <p> <o> .';
       const { quads, provenance } = parse(doc, { format: 'text/n3' });
       const [u] = provenance.get(quads[0]);
-      expect(slice(doc, u.subject[0])).toBe('"s"');
+      expect(slice(doc, u.subject)).toBe('"s"');
     });
 
     it('spans predicate literals in N3 mode', () => {
       const doc = '<s> "p" <o> .';
       const { quads, provenance } = parse(doc, { format: 'text/n3' });
       const [u] = provenance.get(quads[0]);
-      expect(slice(doc, u.predicate[0])).toBe('"p"');
+      expect(slice(doc, u.predicate)).toBe('"p"');
     });
 
     // Numbers and booleans reach the parser as a single `literal` token whose
@@ -187,7 +187,7 @@ describe('ProvenanceParser', () => {
     it('spans pre-datatyped object literals', () => {
       const doc = '<s> <p> 42, 1.5e0, true .';
       const { quads, provenance } = parse(doc);
-      expect(quads.map(q => slice(doc, provenance.get(q)[0].object[0])))
+      expect(quads.map(q => slice(doc, provenance.get(q)[0].object)))
         .toStrictEqual(['42', '1.5e0', 'true']);
     });
 
@@ -195,15 +195,15 @@ describe('ProvenanceParser', () => {
       const doc = '<s> <p> (42) .';
       const { quads, provenance } = parse(doc);
       const first = quads.find(q => q.predicate.value.endsWith('#first'));
-      expect(slice(doc, provenance.get(first)[0].object[0])).toBe('42');
+      expect(slice(doc, provenance.get(first)[0].object)).toBe('42');
     });
 
     it('spans pre-datatyped subject and predicate literals in N3 mode', () => {
       const doc = '42 true <o> .';
       const { quads, provenance } = parse(doc, { format: 'text/n3' });
       const [u] = provenance.get(quads[0]);
-      expect(slice(doc, u.subject[0])).toBe('42');
-      expect(slice(doc, u.predicate[0])).toBe('true');
+      expect(slice(doc, u.subject)).toBe('42');
+      expect(slice(doc, u.predicate)).toBe('true');
     });
 
     it('indexes triple terms', () => {
@@ -216,7 +216,7 @@ describe('ProvenanceParser', () => {
       const doc = '() <p> <o> .';
       const { quads, provenance } = parse(doc);
       const [u] = provenance.get(quads[0]);
-      expect(u.subject).toEqual([]);
+      expect(u.subject).toBeNull();
     });
 
     it('constructs without options', () => {
@@ -226,9 +226,9 @@ describe('ProvenanceParser', () => {
 
     it('iterates over utterance lists without exposing counts', () => {
       const { provenance } = parse('<s> <p> <o> .\n<s> <p> <o2> .');
-      const utteranceLists = [...provenance];
-      expect(utteranceLists.map(utterances => utterances.length)).toEqual([1, 1]);
-      expect(utteranceLists[0][0].quad.termType).toBe('Quad');
+      const entries = [...provenance];
+      expect(entries.map(([, occurrences]) => occurrences.length)).toEqual([1, 1]);
+      expect(entries[0][0].termType).toBe('Quad');
       expect(provenance).not.toHaveProperty('size');
       expect(provenance).not.toHaveProperty('utteranceCount');
       expect(new ProvenanceIndex().get(DataFactory.quad(
@@ -237,21 +237,57 @@ describe('ProvenanceParser', () => {
     });
   });
 
-  describe('term-symbol tracking', () => {
+  describe('located-term tracking', () => {
     it('keeps the opening token active for delayed literal construction', () => {
       const doc = '<s> <p> "typed"^^<type>, "directed"@en--ltr, 42 .';
       const { quads, provenance } = parse(doc);
-      expect(quads.map(q => slice(doc, provenance.get(q)[0].object[0])))
+      expect(quads.map(q => slice(doc, provenance.get(q)[0].object)))
         .toStrictEqual(['"typed"', '"directed"', '42']);
     });
 
-    it('does not attach source tokens to emitted quads or implicit reification terms', () => {
+    it('does not attach source metadata to emitted quads or implicit reification terms', () => {
       const { quads } = parse('<s> <p> <o> ~ .');
       const reifies = quads.find(q => q.predicate.value.endsWith('#reifies'));
       expect(reifies).toBeDefined();
       expect(Object.getOwnPropertySymbols(reifies)).toHaveLength(0);
       expect(Object.getOwnPropertySymbols(reifies.subject)).toHaveLength(0);
       expect(Object.getOwnPropertySymbols(reifies.object)).toHaveLength(0);
+    });
+
+    it('does not mutate terms returned by a frozen factory', () => {
+      const factory = Object.create(DataFactory), terms = [];
+      for (const name of ['namedNode', 'blankNode', 'variable', 'literal', 'quad']) {
+        Object.defineProperty(factory, name, {
+          value(...args) {
+            const value = DataFactory[name](...args);
+            terms.push(value);
+            return Object.freeze(value);
+          },
+        });
+      }
+
+      const { quads } = parse('<s> <p> [ <q> "value" ] .', { factory });
+      expect(quads).toHaveLength(2);
+      expect(terms.every(Object.isFrozen)).toBe(true);
+      expect(terms.every(term => Object.getOwnPropertySymbols(term).length === 0)).toBe(true);
+    });
+
+    it('locates each use of a quantified entity at its own token', () => {
+      const doc = '@forAll <x>. <x> <p> <o> .';
+      const { quads, provenance } = parse(doc, { format: 'text/n3' });
+      const quad = quads.find(({ predicate }) => predicate.value === `${BASE_IRI}p`);
+      const [{ subject }] = provenance.get(quad);
+      expect(offset(doc, subject.start)).toBe(doc.lastIndexOf('<x>'));
+    });
+
+    it('carries the location of an IRI property-list identifier', () => {
+      const doc = '[id <s> <p> <o>].';
+      const { quads, provenance } = parse(doc, { format: 'text/n3' });
+      expect(slice(doc, provenance.get(quads[0])[0].subject)).toBe('<s>');
+    });
+
+    it('propagates entity parse errors', () => {
+      expect(() => parse('<s> <p> .')).toThrow('Expected entity but got .');
     });
 
     it('preserves custom factory receivers and method arities', () => {

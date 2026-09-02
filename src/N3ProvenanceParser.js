@@ -1,6 +1,6 @@
 // **N3ProvenanceParser** parses a document and indexes each quad utterance by
-// the source tokens attached by N3TermLocationParser.
-import N3TermLocationParser from './N3TermLocationParser';
+// the locations emitted by N3SourceParser.
+import N3SourceParser from './N3SourceParser';
 import { ProvenanceIndex } from './N3ProvenanceIndex';
 
 export { ProvenanceIndex };
@@ -12,8 +12,8 @@ export default class N3ProvenanceParser {
     const parserOptions = { ...this._options };
     const provenance = new ProvenanceIndex(parserOptions.entityIndex);
     delete parserOptions.entityIndex;
-    parserOptions.onQuad = quad => provenance._add(quad);
-    const parser = new N3TermLocationParser(parserOptions);
+    parserOptions.onQuad = (quad, occurrence) => provenance._add(quad, occurrence);
+    const parser = new N3SourceParser(parserOptions);
     const quads = parser.parse(input);
     return { quads, provenance, prefixes: parser._prefixes };
   }
