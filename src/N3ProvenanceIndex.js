@@ -1,10 +1,11 @@
 // **N3ProvenanceIndex** stores and resolves the locations of quad utterances.
 import { N3EntityIndex } from './N3Store';
-import { termRanges } from './N3TermLocationParser';
+import { lineOffsets, termRanges } from './N3TermLocationParser';
 
 export class ProvenanceIndex {
   constructor(input = '', entityIndex = new N3EntityIndex()) {
     this._input = input;
+    this._lineOffsets = null;
     this._entityIndex = entityIndex;
     this._quadOccurrences = new Map();
     this._quads = null;
@@ -25,12 +26,13 @@ export class ProvenanceIndex {
 
   _utterance(id) {
     const quad = this._quads[id];
+    const offsets = this._lineOffsets || (this._lineOffsets = lineOffsets(this._input));
     return {
       quad,
-      subject: termRanges(this._input, quad.subject),
-      predicate: termRanges(this._input, quad.predicate),
-      object: termRanges(this._input, quad.object),
-      graph: termRanges(this._input, quad.graph),
+      subject: termRanges(this._input, quad.subject, offsets),
+      predicate: termRanges(this._input, quad.predicate, offsets),
+      object: termRanges(this._input, quad.object, offsets),
+      graph: termRanges(this._input, quad.graph, offsets),
     };
   }
 

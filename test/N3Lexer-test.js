@@ -1876,7 +1876,7 @@ describe('Lexer', () => {
       ]);
     });
 
-    it('returns start and end index relative to line', () => {
+    it('returns start and end index relative to the physical line', () => {
       const tokens = new Lexer().tokenize('<a:a> <b:c> "lit"@EN ; \n <b:d> <d:e> .');
       expect(tokens).toEqual([
         { line: 1, prefix: '', type: 'IRI', value: 'a:a', start: 0, end: 6 },
@@ -1884,16 +1884,17 @@ describe('Lexer', () => {
         { line: 1, prefix: '', type: 'literal', value: 'lit', start: 12, end: 17 },
         { line: 1, prefix: '', type: 'langcode', value: 'EN', start: 17, end: 20 },
         { line: 1, prefix: '', type: ';', value: '', start: 21, end: 22 },
-        { line: 2, prefix: '', type: 'IRI', value: 'b:d', start: 0, end: 6 },
-        { line: 2, prefix: '', type: 'IRI', value: 'd:e', start: 6, end: 12 },
-        { line: 2, prefix: '', type: '.', value: '', start: 12, end: 13 },
-        { line: 2, prefix: '', type: 'eof', value: '', start: 13, end: 13 },
+        { line: 2, prefix: '', type: 'IRI', value: 'b:d', start: 1, end: 7 },
+        { line: 2, prefix: '', type: 'IRI', value: 'd:e', start: 7, end: 13 },
+        { line: 2, prefix: '', type: '.', value: '', start: 13, end: 14 },
+        { line: 2, prefix: '', type: 'eof', value: '', start: 14, end: 14 },
       ]);
     });
 
     it.each([
       ['LF', '<s> <p> """a\nb""" .', 'a\nb', 17],
       ['CRLF', '<s> <p> """a\r\nb""" .', 'a\r\nb', 18],
+      ['CR', '<s> <p> """a\rb""" .', 'a\rb', 17],
     ])('returns line-relative indexes after a multiline literal with %s', (_, input, value, literalEnd) => {
       const tokens = new Lexer().tokenize(input);
       expect(tokens.filter(token => token.type === 'literal' || token.type === '.' || token.type === 'eof')).toEqual([

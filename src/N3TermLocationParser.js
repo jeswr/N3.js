@@ -3,18 +3,33 @@ import N3Parser from './N3Parser';
 
 export const TERM_TOKEN = Symbol('n3.sourceToken');
 
-function tokenRange(input, token) {
-  if (!token)
-    return [];
-  const start = token.offsetStart;
-  let end = token.offsetEnd;
+export function lineOffsets(input) {
+  const offsets = [input.charCodeAt(0) === 0xFEFF ? 1 : 0];
+  for (let i = 0; i < input.length; i++) {
+    const char = input.charCodeAt(i);
+    if (char === 13) {
+      if (input.charCodeAt(i + 1) === 10)
+        i++;
+      offsets.push(i + 1);
+    }
+    else if (char === 10)
+      offsets.push(i + 1);
+  }
+  return offsets;
+}
+
+function tokenRange(input, token, offsets) {
+  const lineOffset = offsets[token.line - 1];
+  const start = lineOffset + token.start;
+  let end = lineOffset + token.end;
   while (end > start && /\s/.test(input[end - 1]))
     end--;
   return [{ start, end, line: token.line }];
 }
 
-export function termRanges(input, term) {
-  return tokenRange(input, term[TERM_TOKEN]);
+export function termRanges(input, term, offsets) {
+  const token = term[TERM_TOKEN];
+  return token ? tokenRange(input, token, offsets || lineOffsets(input)) : [];
 }
 
 function factoryMethod(value) {
@@ -52,9 +67,7 @@ function locationFactory(parser, factory) {
 
 export default class N3TermLocationParser extends N3Parser {
   constructor(options) {
-    const onQuad = options.onQuad;
-    const parserOptions = { ...options, _trackTermLocations: true };
-    delete parserOptions.onQuad;
+    const { onQuad, ...parserOptions } = options;
     super(parserOptions);
 
     this._onQuad = onQuad;

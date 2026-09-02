@@ -1,5 +1,5 @@
 import { Parser, Store, ProvenanceParser, ProvenanceIndex, EntityIndex, DataFactory } from '../src';
-import { TERM_TOKEN } from '../src/N3ProvenanceParser';
+import { TERM_TOKEN, termRanges } from '../src/N3ProvenanceParser';
 
 const BASE_IRI = 'http://example.org/';
 
@@ -38,6 +38,37 @@ describe('ProvenanceParser', () => {
       expect(u1.subject).toEqual(u2.subject);
       expect(slice(doc, u2.predicate[0])).toBe('<p2>');
       expect(u2.predicate[0].line).toBe(2);
+    });
+
+    it.each([
+      ['LF', '\n'],
+      ['CRLF', '\r\n'],
+      ['CR', '\r'],
+    ])('converts indented line positions after %s to source offsets', (_, newline) => {
+      const doc = `<s> <p> <o> .${newline}  <s2> <p2> <o2> .`;
+      const { quads, provenance } = parse(doc);
+      const [utterance] = provenance.get(quads[1]);
+      expect(utterance.subject[0].start).toBe(doc.indexOf('<s2>'));
+      expect(slice(doc, utterance.subject[0])).toBe('<s2>');
+    });
+
+    it.each([
+      ['LF', '\n'],
+      ['CRLF', '\r\n'],
+      ['CR', '\r'],
+    ])('converts a multiline literal containing %s to a source range', (_, newline) => {
+      const lexicalLiteral = `"""first${newline}second"""`;
+      const doc = `<s> <p> ${lexicalLiteral} .`;
+      const { quads, provenance } = parse(doc);
+      expect(slice(doc, provenance.get(quads[0])[0].object[0])).toBe(lexicalLiteral);
+    });
+
+    it('accounts for a byte-order mark when converting line positions', () => {
+      const doc = '\uFEFF<s> <p> <o> .';
+      const { quads, provenance } = parse(doc);
+      const [subject] = provenance.get(quads[0])[0].subject;
+      expect(subject.start).toBe(1);
+      expect(slice(doc, subject)).toBe('<s>');
     });
 
     it('gives synthetic blank nodes their introducing bracket span', () => {
@@ -188,6 +219,12 @@ describe('ProvenanceParser', () => {
   });
 
   describe('term-symbol tracking', () => {
+    it('derives ranges directly from an annotated term', () => {
+      const doc = '<s> <p> <o> .';
+      const { quads } = parse(doc);
+      expect(termRanges(doc, quads[0].subject)).toEqual([{ start: 0, end: 3, line: 1 }]);
+    });
+
     it('keeps the opening token active for delayed literal construction', () => {
       const doc = '<s> <p> "typed"^^<type>, "directed"@en--ltr, 42 .';
       const { quads, provenance } = parse(doc);
