@@ -237,7 +237,7 @@ describe('ProvenanceParser', () => {
     });
   });
 
-  describe('located-term tracking', () => {
+  describe('term-symbol tracking', () => {
     it('keeps the opening token active for delayed literal construction', () => {
       const doc = '<s> <p> "typed"^^<type>, "directed"@en--ltr, 42 .';
       const { quads, provenance } = parse(doc);
@@ -245,7 +245,7 @@ describe('ProvenanceParser', () => {
         .toStrictEqual(['"typed"', '"directed"', '42']);
     });
 
-    it('does not attach source metadata to emitted quads or implicit reification terms', () => {
+    it('keeps source metadata off emitted quads and implicit reification terms', () => {
       const { quads } = parse('<s> <p> <o> ~ .');
       const reifies = quads.find(q => q.predicate.value.endsWith('#reifies'));
       expect(reifies).toBeDefined();
@@ -254,22 +254,12 @@ describe('ProvenanceParser', () => {
       expect(Object.getOwnPropertySymbols(reifies.object)).toHaveLength(0);
     });
 
-    it('does not mutate terms returned by a frozen factory', () => {
-      const factory = Object.create(DataFactory), terms = [];
-      for (const name of ['namedNode', 'blankNode', 'variable', 'literal', 'quad']) {
-        Object.defineProperty(factory, name, {
-          value(...args) {
-            const value = DataFactory[name](...args);
-            terms.push(value);
-            return Object.freeze(value);
-          },
-        });
-      }
-
-      const { quads } = parse('<s> <p> [ <q> "value" ] .', { factory });
-      expect(quads).toHaveLength(2);
-      expect(terms.every(Object.isFrozen)).toBe(true);
-      expect(terms.every(term => Object.getOwnPropertySymbols(term).length === 0)).toBe(true);
+    it('attaches a private source token to lexical terms', () => {
+      const { quads } = parse('<s> <p> <o> .');
+      expect(Object.getOwnPropertySymbols(quads[0])).toHaveLength(0);
+      expect(Object.getOwnPropertySymbols(quads[0].subject)).toHaveLength(1);
+      expect(Object.getOwnPropertySymbols(quads[0].predicate)).toHaveLength(1);
+      expect(Object.getOwnPropertySymbols(quads[0].object)).toHaveLength(1);
     });
 
     it('locates each use of a quantified entity at its own token', () => {

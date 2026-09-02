@@ -1,24 +1,11 @@
-// **N3SourceParser** carries source locations alongside terms while parsing,
-// without adding metadata to the RDF/JS terms themselves.
+// **N3TermLocationParser** attaches source tokens to terms while parsing and emits
+// the corresponding source ranges alongside each quad.
 import N3Parser from './N3Parser';
 
-class LocatedTerm {
-  constructor(term, token) {
-    this.term = term;
-    this.token = token;
-  }
+const TERM_TOKEN = Symbol('n3.sourceToken');
 
-  get id() { return this.term.id; }
-  get termType() { return this.term.termType; }
-  get value() { return this.term.value; }
-}
-
-function term(value) {
-  return value instanceof LocatedTerm ? value.term : value;
-}
-
-function range(value) {
-  return value instanceof LocatedTerm ? tokenRange(value.token) : null;
+function range(term) {
+  return tokenRange(term && term[TERM_TOKEN]);
 }
 
 function tokenRange(token) {
@@ -28,9 +15,9 @@ function tokenRange(token) {
   } : null;
 }
 
-const directFactoryMethods = ['namedNode', 'blankNode', 'variable'];
+const factoryMethods = ['namedNode', 'blankNode', 'variable', 'literal', 'quad'];
 
-export default class N3SourceParser extends N3Parser {
+export default class N3TermLocationParser extends N3Parser {
   constructor(options) {
     const { onQuad, ...parserOptions } = options;
     super(parserOptions);
@@ -40,23 +27,23 @@ export default class N3SourceParser extends N3Parser {
     this._literalToken = null;
     this._untrackedFactory = this._factory;
     this._factory = {};
-    for (const name of directFactoryMethods) {
-      this._factory[name] = (...args) => new LocatedTerm(
-        this._untrackedFactory[name](...args), this._sourceToken,
-      );
-    }
-    for (const name of ['literal', 'quad']) {
-      this._factory[name] = (...args) => new LocatedTerm(
-        this._untrackedFactory[name](...args.map(term)), this._sourceToken,
-      );
+    for (const name of factoryMethods) {
+      this._factory[name] = (...args) => {
+        const term = this._untrackedFactory[name](...args);
+        if (this._sourceToken)
+          term[TERM_TOKEN] = this._sourceToken;
+        return term;
+      };
     }
   }
 
-  // A quantified entity reuses an earlier RDF term, but its location is the
-  // current lexical occurrence rather than the quantifier declaration.
+  // A quantified entity reuses an earlier RDF term, so move its token to the
+  // current lexical occurrence.
   _readEntity(token, quantifier) {
-    const value = super._readEntity(token, quantifier);
-    return value === undefined || value.token === token ? value : new LocatedTerm(term(value), token);
+    const term = super._readEntity(token, quantifier);
+    if (this._n3Mode && !quantifier && term !== undefined && term[TERM_TOKEN] !== token)
+      term[TERM_TOKEN] = token;
+    return term;
   }
 
   _readToken(token) {
@@ -78,7 +65,7 @@ export default class N3SourceParser extends N3Parser {
     }
   }
 
-  // Implicit reifiers and their triple terms have no lexical source term.
+  // Implicit reifiers and their triple terms have no lexical token.
   _readTripleTerm() {
     const previous = this._sourceToken;
     this._sourceToken = null;
@@ -91,9 +78,7 @@ export default class N3SourceParser extends N3Parser {
   }
 
   _emit(subject, predicate, object, graph) {
-    const quad = this._untrackedFactory.quad(
-      term(subject), term(predicate), term(object), term(graph || this.DEFAULTGRAPH),
-    );
+    const quad = this._untrackedFactory.quad(subject, predicate, object, graph || this.DEFAULTGRAPH);
     this._onQuad(quad, {
       subject: range(subject),
       predicate: range(predicate),
