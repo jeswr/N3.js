@@ -40,6 +40,55 @@ export function termRanges(input, term) {
   return tokenRange(input, term[TERM_TOKEN]);
 }
 
+// Decorate only the parser's factory view. The consumer's factory remains
+// untouched, and methods retain the original factory as their `this` value.
+function locationFactory(parser, factory) {
+  const wrapper = Object.create(factory);
+  Object.defineProperties(wrapper, {
+    namedNode: {
+      configurable: true,
+      enumerable: true,
+      value(value) {
+        return parser._setTermToken(factory.namedNode(value), parser._sourceToken);
+      },
+    },
+    blankNode: {
+      configurable: true,
+      enumerable: true,
+      value(value) {
+        const term = arguments.length === 0 ? factory.blankNode() : factory.blankNode(value);
+        return parser._setTermToken(term, parser._sourceToken);
+      },
+    },
+    variable: {
+      configurable: true,
+      enumerable: true,
+      value(value) {
+        return parser._setTermToken(factory.variable(value), parser._sourceToken);
+      },
+    },
+    literal: {
+      configurable: true,
+      enumerable: true,
+      value(value, languageOrDatatype) {
+        const token = parser._literalToken || parser._sourceToken;
+        const term = arguments.length === 1 ? factory.literal(value) : factory.literal(value, languageOrDatatype);
+        return parser._setTermToken(term, token);
+      },
+    },
+    quad: {
+      configurable: true,
+      enumerable: true,
+      value(subject, predicate, object, graph) {
+        const term = arguments.length === 3 ? factory.quad(subject, predicate, object) :
+          factory.quad(subject, predicate, object, graph);
+        return parser._setTermToken(term, parser._sourceToken);
+      },
+    },
+  });
+  return wrapper;
+}
+
 class TermLocationParser extends N3Parser {
   constructor(options) {
     const onLocation = options.onLocation;
@@ -47,20 +96,63 @@ class TermLocationParser extends N3Parser {
     delete parserOptions.onLocation;
     super(parserOptions);
     this._onLocation = onLocation;
+    this._sourceToken = null;
+    this._literalToken = null;
+    this._factory = locationFactory(this, this._factory);
   }
 
-  _noteSpan(term, token) {
-    term[TERM_TOKEN] = token;
+  _setTermToken(term, token) {
+    if (token)
+      term[TERM_TOKEN] = token;
     return term;
   }
 
-  _noteLiteralToken(literal) {
-    literal[TERM_TOKEN] = this._literalToken;
-    return literal;
+  _readToken(token) {
+    // A regular string literal is constructed while reading its following
+    // datatype, language tag, direction, or punctuation token. Retain its
+    // opening token until that construction has finished.
+    if (token.type === 'literal')
+      this._literalToken = token.prefix.length === 0 ? token : null;
+
+    const previous = this._sourceToken;
+    this._sourceToken = token;
+    try {
+      const next = super._readToken(token);
+      if (token.type !== 'literal' && next !== this._readDirCode)
+        this._literalToken = null;
+      return next;
+    }
+    finally {
+      this._sourceToken = previous;
+    }
+  }
+
+  // Reification creates an implicit identifier and triple term. Neither has
+  // a lexical token of its own, even though their construction is triggered
+  // while another token is active.
+  _readTripleTerm() {
+    const previous = this._sourceToken;
+    this._sourceToken = null;
+    try {
+      return super._readTripleTerm();
+    }
+    finally {
+      this._sourceToken = previous;
+    }
   }
 
   _emit(subject, predicate, object, graph) {
-    const quad = this._factory.quad(subject, predicate, object, graph || this.DEFAULTGRAPH);
+    // The quad is an event container, not a source term. Embedded triple-term
+    // quads are still annotated because they are created outside `_emit`.
+    const previous = this._sourceToken;
+    this._sourceToken = null;
+    let quad;
+    try {
+      quad = this._factory.quad(subject, predicate, object, graph || this.DEFAULTGRAPH);
+    }
+    finally {
+      this._sourceToken = previous;
+    }
     this._onLocation(quad);
     this._callback(null, quad);
   }

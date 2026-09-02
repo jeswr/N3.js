@@ -1,4 +1,5 @@
 import { Parser, Store, ProvenanceParser, ProvenanceIndex, termKey, DataFactory } from '../src';
+import { TERM_TOKEN } from '../src/N3ProvenanceParser';
 
 const BASE_IRI = 'http://example.org/';
 
@@ -193,6 +194,50 @@ describe('ProvenanceParser', () => {
   });
 
   describe('term-symbol tracking', () => {
+    it('keeps the opening token active for delayed literal construction', () => {
+      const doc = '<s> <p> "typed"^^<type>, "directed"@en--ltr, 42 .';
+      const { quads, provenance } = parse(doc);
+      expect(quads.map(q => slice(doc, provenance.get(q)[0].object[0])))
+        .toStrictEqual(['"typed"', '"directed"', '42']);
+    });
+
+    it('does not attach source tokens to emitted quads or implicit reification terms', () => {
+      const { quads } = parse('<s> <p> <o> ~ .');
+      const reifies = quads.find(q => q.predicate.value.endsWith('#reifies'));
+      expect(reifies).toBeDefined();
+      expect(Object.prototype.hasOwnProperty.call(reifies, TERM_TOKEN)).toBe(false);
+      expect(Object.prototype.hasOwnProperty.call(reifies.subject, TERM_TOKEN)).toBe(false);
+      expect(Object.prototype.hasOwnProperty.call(reifies.object, TERM_TOKEN)).toBe(false);
+    });
+
+    it('preserves custom factory receivers and method arities', () => {
+      function recordingFactory(calls) {
+        const factory = Object.create(DataFactory);
+        for (const name of ['namedNode', 'blankNode', 'variable', 'literal', 'defaultGraph', 'quad']) {
+          Object.defineProperty(factory, name, {
+            value(...args) {
+              calls.push({ name, arity: args.length, receiver: this });
+              return DataFactory[name](...args);
+            },
+          });
+        }
+        return factory;
+      }
+
+      const doc = '<s> <p> [ <q> "value" ] .\n<s> <p> <<( <x> <y> _:z )>> .';
+      const plainCalls = [], trackedCalls = [];
+      new Parser({ baseIRI: BASE_IRI, blankNodePrefix: '', factory: recordingFactory(plainCalls) }).parse(doc);
+      const trackedFactory = recordingFactory(trackedCalls);
+      parse(doc, { factory: trackedFactory });
+      expect(trackedCalls.map(({ name, arity }) => ({ name, arity })))
+        .toStrictEqual(plainCalls.map(({ name, arity }) => ({ name, arity })));
+      expect(trackedCalls.every(({ receiver }) => receiver === trackedFactory)).toBe(true);
+
+      const variableCalls = [], variableFactory = recordingFactory(variableCalls);
+      parse('?s <p> <o> .', { format: 'text/n3', factory: variableFactory });
+      expect(variableCalls.find(({ name }) => name === 'variable').receiver).toBe(variableFactory);
+    });
+
     it('does not change what the parser emits', () => {
       const doc = '@prefix ex: <http://ex.example/>.\nex:s ex:p [ ex:q (1 2) ], "x"@en--ltr .';
       // anonymous blank node labels come from a global counter, so compare
