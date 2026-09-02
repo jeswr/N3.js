@@ -30,8 +30,7 @@ export default class N3TermLocationParser extends N3Parser {
     for (const name of factoryMethods) {
       this._factory[name] = (...args) => {
         const term = this._untrackedFactory[name](...args);
-        if (this._sourceToken)
-          term[TERM_TOKEN] = this._sourceToken;
+        term[TERM_TOKEN] = this._sourceToken;
         return term;
       };
     }
@@ -51,30 +50,18 @@ export default class N3TermLocationParser extends N3Parser {
     if (token.type === 'literal')
       this._literalToken = token.prefix.length === 0 ? token : null;
 
-    const previous = this._sourceToken;
     this._sourceToken = this._literalToken || token;
-    try {
-      const next = super._readToken(token);
-      // A language literal may still be replaced by a directional literal.
-      if (token.type !== 'literal' && next !== this._readDirCode)
-        this._literalToken = null;
-      return next;
-    }
-    finally {
-      this._sourceToken = previous;
-    }
+    const next = super._readToken(token);
+    // A language literal may still be replaced by a directional literal.
+    if (token.type !== 'literal' && next !== this._readDirCode)
+      this._literalToken = null;
+    return next;
   }
 
   // Implicit reifiers and their triple terms have no lexical token.
   _readTripleTerm() {
-    const previous = this._sourceToken;
     this._sourceToken = null;
-    try {
-      return super._readTripleTerm();
-    }
-    finally {
-      this._sourceToken = previous;
-    }
+    return super._readTripleTerm();
   }
 
   _emit(subject, predicate, object, graph) {
