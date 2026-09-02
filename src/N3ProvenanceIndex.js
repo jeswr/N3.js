@@ -5,7 +5,7 @@ import { termRanges } from './N3TermLocationParser';
 export class ProvenanceIndex {
   constructor(entityIndex = new N3EntityIndex()) {
     this._entityIndex = entityIndex;
-    this._quadOccurrences = new Map();
+    this._quadOccurrences = Object.create(null);
   }
 
   _add(quad) {
@@ -16,9 +16,9 @@ export class ProvenanceIndex {
       object: termRanges(quad.object),
       graph: termRanges(quad.graph),
     };
-    const occurrences = this._quadOccurrences.get(quadId);
+    const occurrences = this._quadOccurrences[quadId];
     if (occurrences === undefined)
-      this._quadOccurrences.set(quadId, [occurrence]);
+      this._quadOccurrences[quadId] = [occurrence];
     else
       occurrences.push(occurrence);
   }
@@ -33,12 +33,12 @@ export class ProvenanceIndex {
 
   get(quad) {
     const quadId = this._entityIndex._termToNumericId(quad);
-    const occurrences = this._quadOccurrences.get(quadId);
+    const occurrences = this._quadOccurrences[quadId];
     return occurrences === undefined ? [] : this._withQuad(quad, occurrences);
   }
 
   *[Symbol.iterator]() {
-    for (const [quadId, occurrences] of this._quadOccurrences)
-      yield this._withQuad(this._quad(quadId), occurrences);
+    for (const quadId in this._quadOccurrences)
+      yield this._withQuad(this._quad(quadId), this._quadOccurrences[quadId]);
   }
 }

@@ -34,7 +34,7 @@ describe('ProvenanceParser', () => {
       const doc = '<s> <p> <o> .\n<s> <p> <o> .\n<s> <p> <o> .';
       const { quads, provenance } = parse(doc);
       expect(provenance.get(quads[0])).toHaveLength(3);
-      const occurrences = provenance._quadOccurrences.values().next().value;
+      const occurrences = Object.values(provenance._quadOccurrences)[0];
       expect(occurrences).toHaveLength(3);
       expect(occurrences[0]).not.toHaveProperty('quad');
       expect(slice(doc, occurrences[0].subject[0])).toBe('<s>');
@@ -119,7 +119,8 @@ describe('ProvenanceParser', () => {
       const allocatedIds = entityIndex._id;
       const quadId = entityIndex._termToNumericId(quads[0]);
       expect(quadId).toEqual(expect.any(Number));
-      expect(provenance._quadOccurrences.get(quadId)).toHaveLength(1);
+      expect(Object.getPrototypeOf(provenance._quadOccurrences)).toBeNull();
+      expect(provenance._quadOccurrences[quadId]).toHaveLength(1);
 
       const store = new Store({ entityIndex });
       store.addQuads(quads);
