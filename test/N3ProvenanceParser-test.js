@@ -30,12 +30,14 @@ describe('ProvenanceParser', () => {
       expect(utts[0].subject[0].start).not.toEqual(utts[1].subject[0].start);
     });
 
-    it('stores a compact list after the second duplicate utterance', () => {
+    it('stores occurrence data directly for duplicate utterances', () => {
       const doc = '<s> <p> <o> .\n<s> <p> <o> .\n<s> <p> <o> .';
       const { quads, provenance } = parse(doc);
       expect(provenance.get(quads[0])).toHaveLength(3);
-      expect(provenance.utteranceCount).toBe(3);
-      expect([...provenance][0]).toHaveLength(3);
+      const occurrences = provenance._quadOccurrences.values().next().value;
+      expect(occurrences).toHaveLength(3);
+      expect(occurrences[0]).not.toHaveProperty('quad');
+      expect(slice(doc, occurrences[0].subject[0])).toBe('<s>');
     });
 
     it('reuses the subject span across a predicateObjectList', () => {
@@ -117,7 +119,7 @@ describe('ProvenanceParser', () => {
       const allocatedIds = entityIndex._id;
       const quadId = entityIndex._termToNumericId(quads[0]);
       expect(quadId).toEqual(expect.any(Number));
-      expect(provenance._quadOccurrences.get(quadId)).toBe(0);
+      expect(provenance._quadOccurrences.get(quadId)).toHaveLength(1);
 
       const store = new Store({ entityIndex });
       store.addQuads(quads);
@@ -221,10 +223,13 @@ describe('ProvenanceParser', () => {
       expect(quads).toHaveLength(1);
     });
 
-    it('exposes size and iteration over utterance lists', () => {
+    it('iterates over utterance lists without exposing counts', () => {
       const { provenance } = parse('<s> <p> <o> .\n<s> <p> <o2> .');
-      expect(provenance.size).toBe(2);
-      expect([...provenance].map(utts => utts.length)).toEqual([1, 1]);
+      const utteranceLists = [...provenance];
+      expect(utteranceLists.map(utterances => utterances.length)).toEqual([1, 1]);
+      expect(utteranceLists[0][0].quad.termType).toBe('Quad');
+      expect(provenance).not.toHaveProperty('size');
+      expect(provenance).not.toHaveProperty('utteranceCount');
       expect(new ProvenanceIndex().get(DataFactory.quad(
         DataFactory.namedNode('x:s'), DataFactory.namedNode('x:p'), DataFactory.namedNode('x:o'),
       ))).toEqual([]);

@@ -6,48 +6,39 @@ export class ProvenanceIndex {
   constructor(entityIndex = new N3EntityIndex()) {
     this._entityIndex = entityIndex;
     this._quadOccurrences = new Map();
-    this._quads = null;
-    this._utteranceCount = 0;
   }
 
   _add(quad) {
-    const occurrenceId = this._utteranceCount++;
     const quadId = this._entityIndex._termToNewNumericId(quad);
-    const previous = this._quadOccurrences.get(quadId);
-    if (previous === undefined)
-      this._quadOccurrences.set(quadId, occurrenceId);
-    else if (!Array.isArray(previous))
-      this._quadOccurrences.set(quadId, [previous, occurrenceId]);
-    else
-      previous.push(occurrenceId);
-  }
-
-  _utterance(id) {
-    const quad = this._quads[id];
-    return {
-      quad,
+    const occurrence = {
       subject: termRanges(quad.subject),
       predicate: termRanges(quad.predicate),
       object: termRanges(quad.object),
       graph: termRanges(quad.graph),
     };
+    const occurrences = this._quadOccurrences.get(quadId);
+    if (occurrences === undefined)
+      this._quadOccurrences.set(quadId, [occurrence]);
+    else
+      occurrences.push(occurrence);
   }
 
-  _utterances(ids) {
-    return typeof ids === 'number' ? [this._utterance(ids)] : ids.map(id => this._utterance(id));
+  _quad(quadId) {
+    return this._entityIndex._termFromId(this._entityIndex._entities[quadId]);
+  }
+
+  _withQuad(quad, occurrences) {
+    return occurrences.map(occurrence => ({ quad, ...occurrence }));
   }
 
   get(quad) {
     const quadId = this._entityIndex._termToNumericId(quad);
-    const ids = this._quadOccurrences.get(quadId);
-    return ids === undefined ? [] : this._utterances(ids);
+    const occurrences = this._quadOccurrences.get(quadId);
+    return occurrences === undefined ? [] : this._withQuad(quad, occurrences);
   }
 
-  get size() { return this._quadOccurrences.size; }
-  get utteranceCount() { return this._utteranceCount; }
-
   *[Symbol.iterator]() {
-    for (const ids of this._quadOccurrences.values())
-      yield this._utterances(ids);
+    for (const [quadId, occurrences] of this._quadOccurrences)
+      yield this._withQuad(this._quad(quadId), occurrences);
   }
 }
