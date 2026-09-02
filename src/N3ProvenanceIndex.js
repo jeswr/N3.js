@@ -1,45 +1,31 @@
 // **N3ProvenanceIndex** stores and resolves the locations of quad utterances.
-import { termToId } from './N3DataFactory';
+import { N3EntityIndex } from './N3Store';
 import { termRanges } from './N3TermLocationParser';
 
-export function termKey(term) {
-  switch (term.termType) {
-  case 'NamedNode': return `<${term.value}>`;
-  case 'BlankNode': return `_:${term.value}`;
-  case 'Literal': {
-    const val = `"${term.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r')}"`;
-    if (term.language)
-      return `${val}@${term.language}${term.direction ? `--${term.direction}` : ''}`;
-    if (term.datatype && term.datatype.value !== 'http://www.w3.org/2001/XMLSchema#string')
-      return `${val}^^<${term.datatype.value}>`;
-    return val;
-  }
-  case 'DefaultGraph': return '';
-  case 'Variable': return `?${term.value}`;
-  case 'Quad': return `<<(${termKey(term.subject)} ${termKey(term.predicate)} ${termKey(term.object)})>>`;
-  default: throw new Error(`termKey: unknown termType ${term.termType}`);
-  }
-}
-
-export function quadKey(quad) { return termToId(quad); }
-
 export class ProvenanceIndex {
-  constructor(input = '') {
+  constructor(input = '', entityIndex = new N3EntityIndex()) {
     this._input = input;
-    this._map = new Map();
-    this._quads = [];
+    this._entityIndex = entityIndex;
+    // The entity index's numeric quad ID is the array slot; each value is one
+    // occurrence ID, or an array only when the same quad occurs more than once.
+    this._quadOccurrences = [];
+    this._quadIds = [];
+    this._quads = null;
+    this._utteranceCount = 0;
   }
 
   _add(quad) {
-    const id = this._quads.length;
-    this._quads.push(quad);
-    const key = quadKey(quad), previous = this._map.get(key);
-    if (previous === undefined)
-      this._map.set(key, id);
-    else if (typeof previous === 'number')
-      this._map.set(key, [previous, id]);
+    const occurrenceId = this._utteranceCount++;
+    const quadId = this._entityIndex._termToNewNumericId(quad);
+    const previous = this._quadOccurrences[quadId];
+    if (previous === undefined) {
+      this._quadIds.push(quadId);
+      this._quadOccurrences[quadId] = occurrenceId;
+    }
+    else if (!Array.isArray(previous))
+      this._quadOccurrences[quadId] = [previous, occurrenceId];
     else
-      previous.push(id);
+      previous.push(occurrenceId);
   }
 
   _utterance(id) {
@@ -54,17 +40,20 @@ export class ProvenanceIndex {
   }
 
   get(quad) {
-    const ids = this._map.get(quadKey(quad));
+    const quadId = this._entityIndex._termToNumericId(quad);
+    const ids = quadId && this._quadOccurrences[quadId];
     if (ids === undefined)
       return [];
     return typeof ids === 'number' ? [this._utterance(ids)] : ids.map(id => this._utterance(id));
   }
 
-  get size() { return this._map.size; }
-  get utteranceCount() { return this._quads.length; }
+  get size() { return this._quadIds.length; }
+  get utteranceCount() { return this._utteranceCount; }
 
   *[Symbol.iterator]() {
-    for (const ids of this._map.values())
+    for (const quadId of this._quadIds) {
+      const ids = this._quadOccurrences[quadId];
       yield typeof ids === 'number' ? [this._utterance(ids)] : ids.map(id => this._utterance(id));
+    }
   }
 }
