@@ -100,7 +100,7 @@ export default class N3Lexer {
     // Continue parsing as far as possible; the loop will return eventually
     let input = this._input;
     const self = this;
-    let currentLineLength = input.length;
+    let currentLineLength = this._linePosition + input.length;
     while (true) {
       // Count and skip whitespace lines
       let whiteSpaceMatch, comment;
@@ -129,13 +129,14 @@ export default class N3Lexer {
           input = null;
           emitToken('eof', '', '', this._line, 0);
         }
+        this._linePosition = input === null ? currentLineLength : currentLineLength - input.length;
         return this._input = input;
       }
 
       // Look for specific token types based on the first character
       const line = this._line, firstChar = input[0];
       let type = '', value = '', prefix = '',
-          match = null, matchLength = 0, inconclusive = false;
+          match = null, matchLength = 0, finalLineLength = 0, inconclusive = false;
       switch (firstChar) {
       case '^':
         // We need at least 3 tokens lookahead to distinguish ^^<IRI> and ^^pre:fixed
@@ -209,7 +210,7 @@ export default class N3Lexer {
           value = match[1];
         // Try to find a literal wrapped in three pairs of quotes
         else {
-          ({ value, matchLength } = this._parseLiteral(input));
+          ({ value, matchLength, finalLineLength } = this._parseLiteral(input));
           if (value === null)
             return reportSyntaxError(this);
         }
@@ -226,7 +227,7 @@ export default class N3Lexer {
             value = match[1];
           // Try to find a literal wrapped in three pairs of quotes
           else {
-            ({ value, matchLength } = this._parseLiteral(input));
+            ({ value, matchLength, finalLineLength } = this._parseLiteral(input));
             if (value === null)
               return reportSyntaxError(this);
           }
@@ -437,8 +438,10 @@ export default class N3Lexer {
         // One exception: error on an unaccounted linebreak (= not inside a triple-quoted literal).
         if (inputFinished || (!/^'''|^"""/.test(input) && /\n|\r/.test(input)))
           return reportSyntaxError(this);
-        else
+        else {
+          this._linePosition = currentLineLength - input.length;
           return this._input = input;
+        }
       }
 
       // Emit the parsed token
@@ -449,6 +452,8 @@ export default class N3Lexer {
 
       // Advance to next part to tokenize
       this._offset += length, input = input.slice(length);
+      if (finalLineLength)
+        currentLineLength = input.length + finalLineLength;
     }
 
     // Emits the token through the callback
@@ -530,13 +535,15 @@ export default class N3Lexer {
               openingLength === 3 && this._lineMode)
             break;
           this._line += lines;
-          return { value: this._unescape(raw, stringEscapeReplacements), matchLength };
+          const finalLineLength = lines === 0 ? 0 :
+            raw.length - Math.max(raw.lastIndexOf('\n'), raw.lastIndexOf('\r')) - 1 + openingLength;
+          return { value: this._unescape(raw, stringEscapeReplacements), matchLength, finalLineLength };
         }
         closingPos++;
       }
       this._literalClosingPos = input.length - openingLength + 1;
     }
-    return { value: '', matchLength: 0 };
+    return { value: '', matchLength: 0, finalLineLength: 0 };
   }
 
   // ### `_syntaxError` creates a syntax error for the given issue
@@ -562,6 +569,8 @@ export default class N3Lexer {
   // The input can be a string or a stream.
   tokenize(input, callback) {
     this._line = 1;
+    this._linePosition = 0;
+    this._offset = 0;
 
     // If the input is a string, continuously emit tokens through the callback until the end
     if (typeof input === 'string') {

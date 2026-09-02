@@ -1891,6 +1891,33 @@ describe('Lexer', () => {
       ]);
     });
 
+    it.each([
+      ['LF', '<s> <p> """a\nb""" .', 'a\nb', 17],
+      ['CRLF', '<s> <p> """a\r\nb""" .', 'a\r\nb', 18],
+    ])('returns line-relative indexes after a multiline literal with %s', (_, input, value, literalEnd) => {
+      const tokens = new Lexer().tokenize(input);
+      expect(tokens.filter(token => token.type === 'literal' || token.type === '.' || token.type === 'eof')).toEqual([
+        { line: 1, prefix: '', type: 'literal', value, start: 8, end: literalEnd },
+        { line: 2, prefix: '', type: '.', value: '', start: 5, end: 6 },
+        { line: 2, prefix: '', type: 'eof', value: '', start: 6, end: 6 },
+      ]);
+    });
+
+    it('keeps line-relative indexes when a stream splits after a multiline literal', () => {
+      const stream = new EventEmitter(), tokens = [];
+      new Lexer().tokenize(stream, (error, token) => {
+        expect(error).toBeNull();
+        tokens.push(token);
+      });
+      stream.emit('data', '<s> <p> """a\nb"""');
+      stream.emit('data', ' .');
+      stream.emit('end');
+      expect(tokens.filter(token => token.type === '.' || token.type === 'eof')).toEqual([
+        { line: 2, prefix: '', type: '.', value: '', start: 5, end: 6 },
+        { line: 2, prefix: '', type: 'eof', value: '', start: 6, end: 6 },
+      ]);
+    });
+
     it('returns index including whitespaces', () => {
       const tokens = new Lexer().tokenize('<a:a>   <b:c>    <d:e>  .');
       expect(tokens).toEqual([
