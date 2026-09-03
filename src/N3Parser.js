@@ -1581,32 +1581,16 @@ export default class N3Parser {
       const quads = [];
       let error;
       this._callback = (e, t) => { e ? (error = e) : t && quads.push(t); };
-      if (this._readToken !== N3Parser.prototype._readToken) {
-        if (typeof this._lexer._tokenizeDirect === 'function')
-          this._lexer._tokenizeDirect(input, (lexerError, token) => {
-            if (lexerError !== null) {
-              error = error || lexerError;
-              return false;
-            }
-            return this._readToken(token) !== undefined;
-          });
-        else
-          this._lexer.tokenize(input).every(token => this._readToken(token));
-      }
-      else
-        this._lexer.tokenize(input).every(token => this._readCallback = this._readCallback(token));
+      this._lexer.tokenize(input).every(token => this._readToken(token));
       if (error) throw error;
       return quads;
     }
 
-    const readToken = this._readToken !== N3Parser.prototype._readToken ?
-      token => this._readToken(token) :
-      token => { this._readCallback = this._readCallback(token); };
     let processNextToken = (error, token) => {
       if (error !== null)
         this._callback(error), this._callback = noop;
       else if (this._readCallback)
-        readToken(token);
+        this._readToken(token);
     };
 
     // Enable checking for comments on every token when a commentCallback has been set
@@ -1621,7 +1605,7 @@ export default class N3Parser {
           if (token.type === 'comment')
             onComment(token.value);
           else
-            readToken(token);
+            this._readToken(token);
         }
       };
     }

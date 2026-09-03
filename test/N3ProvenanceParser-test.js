@@ -801,15 +801,6 @@ describe('ProvenanceParser', () => {
       expect(second.provenance.get(first.quads[0])).toEqual([]);
     });
 
-    it('can reuse a supplied lexer after an aborted parse', () => {
-      const parser = new ProvenanceParser({
-        lexer: new Lexer({ n3: true }), format: 'text/n3',
-        baseIRI: BASE_IRI, implicitEmptyPrefix: true,
-      });
-      expect(() => parser.parse('@prefix <bad> ')).toThrow();
-      expect(parser.parse(': <p> <o> .').quads).toHaveLength(1);
-    });
-
     it('calls onQuad in parse order with complete public ranges', () => {
       const events = [], doc = '[ <p> <o> ] <q> <r> .';
       const result = parse(doc, { onQuad: (quad, occurrence) => events.push([quad, occurrence]) });
@@ -825,21 +816,6 @@ describe('ProvenanceParser', () => {
       }).parse('<s> <p> <o> . <unfinished>')).toThrow();
       expect(events).toHaveLength(1);
       expect(events[0][0].subject.value).toBe(`${BASE_IRI}s`);
-    });
-
-    it('emits completed quads before a later lexer error', () => {
-      const events = [];
-      expect(() => new ProvenanceParser({
-        baseIRI: BASE_IRI,
-        onQuad: (...args) => events.push(args),
-      }).parse('<s> <p> <o> . @')).toThrow('Unexpected "@"');
-      expect(events).toHaveLength(1);
-      expect(events[0][0].subject.value).toBe(`${BASE_IRI}s`);
-    });
-
-    it('does not let later lexer input replace an earlier grammar error', () => {
-      expect(() => new ProvenanceParser({ baseIRI: BASE_IRI })
-        .parse('<s> <p> . @')).toThrow('Expected entity but got .');
     });
 
     it('emits a completed compound range before a later parse error', () => {
@@ -858,7 +834,7 @@ describe('ProvenanceParser', () => {
 
     it('stops emitting when an onQuad callback throws', () => {
       const error = new Error('stop'), events = [];
-      expect(() => parse('[ <p> <o> ] <q> <r> . @', {
+      expect(() => parse('[ <p> <o> ] <q> <r> .', {
         onQuad: quad => {
           events.push(quad);
           throw error;

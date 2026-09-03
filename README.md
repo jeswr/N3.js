@@ -183,8 +183,9 @@ not change the index. Additional occurrences can be stored with
 `provenance.add(quad, occurrence)`.
 
 An `onQuad(quad, occurrence)` constructor option receives the same complete
-ranges in parse order as soon as they are known. As with `N3.Parser` callbacks,
-events already emitted are not rolled back if later input is invalid.
+ranges in parse order as soon as they are known. Events emitted before a later
+grammar error are not rolled back. Lexing completes before parsing begins, so a
+lexer error is reported before any `onQuad` events.
 
 Each occurrence has `subject`, `predicate`, `object`, and `graph` fields whose
 value is either `null` or a `{ start: { line, column }, end: { line, column } }`
