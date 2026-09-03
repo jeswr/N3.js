@@ -5,10 +5,7 @@ import N3Parser from './N3Parser';
 const TERM_TOKEN = Symbol('n3.sourceToken');
 
 function range(term) {
-  return tokenRange(term && term[TERM_TOKEN]);
-}
-
-function tokenRange(token) {
+  const token = term && term[TERM_TOKEN];
   return token ? {
     start: { line: token.line, column: token.start },
     end: { line: token.endLine || token.line, column: token.end },
