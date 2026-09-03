@@ -11,7 +11,7 @@ export default class N3ProvenanceParser {
   parse(input) {
     const { entityIndex, ...parserOptions } = this._options;
     const provenance = new ProvenanceIndex(entityIndex);
-    parserOptions.onQuad = (quad, occurrence) => provenance._add(quad, occurrence);
+    parserOptions.onQuad = (quad, occurrence) => provenance.add(quad, occurrence);
     const parser = new N3TermLocationParser(parserOptions);
     const quads = parser.parse(input);
     return { quads, provenance, prefixes: parser._prefixes };

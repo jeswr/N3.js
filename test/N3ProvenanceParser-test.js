@@ -104,6 +104,16 @@ describe('ProvenanceParser', () => {
   });
 
   describe('value-keyed lookup', () => {
+    it('allows occurrences to be added through the public API', () => {
+      const provenance = new ProvenanceIndex();
+      const quad = DataFactory.quad(
+        DataFactory.namedNode('x:s'), DataFactory.namedNode('x:p'), DataFactory.namedNode('x:o'),
+      );
+      const occurrence = { subject: null, predicate: null, object: null, graph: null };
+      provenance.add(quad, occurrence);
+      expect(provenance.get(quad)).toEqual([occurrence]);
+    });
+
     it('resolves quads reconstructed by a store', () => {
       const doc = '<s> <p> "lit" .';
       const { quads, provenance } = parse(doc);

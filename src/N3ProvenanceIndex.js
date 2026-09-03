@@ -7,7 +7,7 @@ export class ProvenanceIndex {
     this._quadOccurrences = Object.create(null);
   }
 
-  _add(quad, occurrence) {
+  add(quad, occurrence) {
     const quadId = this._entityIndex._termToNewNumericId(quad);
     const occurrences = this._quadOccurrences[quadId];
     if (occurrences === undefined)
