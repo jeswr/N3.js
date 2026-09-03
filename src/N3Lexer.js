@@ -18,6 +18,7 @@ const localNameEscapeReplacements = {
   '=': '=', '/': '/', '?': '?', '#': '#', '@': '@', '%': '%',
 };
 const illegalIriChars = /[\x00-\x20<>\\"\{\}\|\^\`]/;
+const abortTokenization = {};
 
 // A valid code point is a Unicode scalar value: at most U+10FFFF and not a surrogate
 function isValidCodePoint(charCode) {
@@ -99,9 +100,17 @@ export default class N3Lexer {
       // Count and skip whitespace lines
       let whiteSpaceMatch, comment;
       while (whiteSpaceMatch = this._newline.exec(input)) {
+        // A trailing CR might be the first half of CRLF in the next stream
+        // chunk. Keep it buffered so the pair counts as one line ending.
+        if (!inputFinished && whiteSpaceMatch[0].endsWith('\r') &&
+            whiteSpaceMatch[0].length === input.length) {
+          this._linePosition = currentLineLength - input.length;
+          return this._input = input;
+        }
         // Try to find a comment
         if (this.comments && (comment = this._comment.exec(whiteSpaceMatch[0])))
-          emitToken('comment', comment[1], '', this._line, whiteSpaceMatch[0].length);
+          emitToken('comment', comment[1], '', this._line, comment[0].length,
+            undefined, undefined, comment.index);
         // Advance the input
         input = input.slice(whiteSpaceMatch[0].length);
         currentLineLength = input.length + whiteSpaceMatch[1].length;
@@ -117,7 +126,8 @@ export default class N3Lexer {
         if (inputFinished) {
           // Try to find a final comment
           if (this.comments && (comment = this._comment.exec(input)))
-            emitToken('comment', comment[1], '', this._line, input.length);
+            emitToken('comment', comment[1], '', this._line, comment[0].length,
+              undefined, undefined, comment.index);
           input = null;
           emitToken('eof', '', '', this._line, 0);
         }
@@ -437,7 +447,9 @@ export default class N3Lexer {
       }
 
       // Emit the parsed token
-      const length = matchLength || match[0].length;
+      // Some patterns append a synthetic space to recognize a term at EOF.
+      // Do not let that lookahead character extend the token beyond the input.
+      const length = Math.min(matchLength || match[0].length, input.length);
       const token = emitToken(type, value, prefix, line, length, this._line, finalLineLength);
       this.previousToken = token;
       this._previousMarker = type;
@@ -449,8 +461,8 @@ export default class N3Lexer {
     }
 
     // Emits the token through the callback
-    function emitToken(type, value, prefix, line, length, endLine, finalLineLength) {
-      const start = input ? currentLineLength - input.length : currentLineLength;
+    function emitToken(type, value, prefix, line, length, endLine, finalLineLength, startOffset = 0) {
+      const start = (input ? currentLineLength - input.length : currentLineLength) + startOffset;
       let end = start + length;
       if (endLine !== undefined) {
         if (finalLineLength)
@@ -565,13 +577,37 @@ export default class N3Lexer {
     return input;
   }
 
+  _resetTokenizationState() {
+    this._line = 1;
+    this._linePosition = 0;
+    this._previousMarker = undefined;
+    this.previousToken = undefined;
+    this._literalClosingPos = 0;
+  }
+
+  // Synchronously emits tokens without first materializing the full token
+  // array. This private parser fast path can stop at the first false return.
+  _tokenizeDirect(input, callback) {
+    this._resetTokenizationState();
+    this._input = this._readStartingBom(input);
+    try {
+      this._tokenizeToEnd((error, token) => {
+        if (callback(error, token) === false)
+          throw abortTokenization;
+      }, true);
+    }
+    catch (error) {
+      if (error !== abortTokenization)
+        throw error;
+    }
+  }
+
   // ## Public methods
 
   // ### `tokenize` starts the transformation of an N3 document into an array of tokens.
   // The input can be a string or a stream.
   tokenize(input, callback) {
-    this._line = 1;
-    this._linePosition = 0;
+    this._resetTokenizationState();
 
     // If the input is a string, continuously emit tokens through the callback until the end
     if (typeof input === 'string') {

@@ -1,7 +1,8 @@
 import { promisify } from 'util';
 
 const browserBundleMembers = [
-  'Lexer', 'Parser', 'Writer', 'Store', 'StoreFactory', 'EntityIndex',
+  'Lexer', 'Parser', 'ProvenanceParser', 'ProvenanceIndex',
+  'Writer', 'Store', 'StoreFactory', 'EntityIndex',
   'StreamParser', 'StreamWriter', 'Util', 'Reasoner', 'BaseIRI',
   'DataFactory', 'Term', 'NamedNode', 'Literal', 'BlankNode', 'Variable',
   'DefaultGraph', 'Quad', 'Triple', 'termFromId', 'termToId',
@@ -21,6 +22,12 @@ export function expectBrowserBundleParser(N3) {
   expect(quads).toHaveLength(1);
   expect(store.size).toBe(1);
   expect(quads[0].subject.value).toBe('http://ex.org/s');
+
+  const source = '<http://ex.org/s> <http://ex.org/p> <http://ex.org/o> .';
+  const parsed = new N3.ProvenanceParser().parse(source);
+  const occurrence = parsed.provenance.get(parsed.quads[0])[0];
+  expect(source.slice(occurrence.subject.start.column, occurrence.subject.end.column))
+    .toBe('<http://ex.org/s>');
 }
 
 export async function expectBrowserBundleWriter(N3) {

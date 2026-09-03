@@ -4,12 +4,10 @@ import {
   expectBrowserBundleWriter,
 } from './browser-bundle-support';
 import { exec } from 'child_process';
-import { access } from 'fs/promises';
 import { resolve } from 'path';
 import { promisify } from 'util';
 
-// The ESM bundle is a build artifact (browser/n3.esm.min.js). CI builds it via
-// the `prepare` script; when running tests in isolation we build it on demand.
+// Build from the current source so a stale artifact cannot satisfy this test.
 const root = resolve(__dirname, '..');
 const bundlePath = resolve(root, 'browser/n3.esm.min.js');
 
@@ -24,9 +22,7 @@ describeEsm('The ESM browser bundle', () => {
   let N3;
 
   beforeAll(async () => {
-    const exists = await access(bundlePath).then(() => true, () => false);
-    if (!exists)
-      await promisify(exec)('npm run build:browser:esm', { cwd: root });
+    await promisify(exec)(`"${process.execPath}" scripts/build-browser-bundle.js esm`, { cwd: root });
     // eslint-disable-next-line import-x/dynamic-import-chunkname
     N3 = await import(bundlePath);
   }, 60000);
@@ -50,5 +46,7 @@ describeEsm('The ESM browser bundle', () => {
     expect(N3.default).toBeDefined();
     expect(N3.default.Store).toBe(N3.Store);
     expect(N3.default.Parser).toBe(N3.Parser);
+    expect(N3.default.ProvenanceParser).toBe(N3.ProvenanceParser);
+    expect(N3.default.ProvenanceIndex).toBe(N3.ProvenanceIndex);
   });
 });

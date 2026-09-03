@@ -1919,6 +1919,43 @@ describe('Lexer', () => {
       ]);
     });
 
+    it('counts CRLF split across stream chunks as one line ending', () => {
+      const stream = new EventEmitter(), tokens = [];
+      new Lexer().tokenize(stream, (error, token) => {
+        expect(error).toBeNull();
+        tokens.push(token);
+      });
+      stream.emit('data', '<s> <p> <o> .\r');
+      stream.emit('data', '\n  <s2> <p2> <o2> .');
+      stream.emit('end');
+      expect(tokens.find(token => token.value === 's2')).toMatchObject({
+        line: 2,
+        start: 2,
+        end: 6,
+      });
+    });
+
+    it('keeps comment coordinates stable across CRLF stream boundaries', () => {
+      const input = '# hi\r\n\t<s> <p> <o> .',
+          expected = new Lexer({ comments: true }).tokenize(input);
+      for (const split of [input.indexOf('\r'), input.indexOf('\r') + 1, input.indexOf('\n') + 1]) {
+        const stream = new EventEmitter(), tokens = [];
+        new Lexer({ comments: true }).tokenize(stream, (error, token) => {
+          expect(error).toBeNull();
+          tokens.push(token);
+        });
+        stream.emit('data', input.slice(0, split));
+        stream.emit('data', input.slice(split));
+        stream.emit('end');
+        expect(tokens).toEqual(expected);
+      }
+    });
+
+    it('does not include synthetic EOF lookahead in token ranges', () => {
+      expect(new Lexer().tokenize('_:x')[0]).toMatchObject({ start: 0, end: 3 });
+      expect(new Lexer().tokenize('ex:x')[0]).toMatchObject({ start: 0, end: 4 });
+    });
+
     it('returns lexical indexes around whitespace', () => {
       const tokens = new Lexer().tokenize('<a:a>   <b:c>    <d:e>  .');
       expect(tokens).toEqual([
@@ -1933,12 +1970,12 @@ describe('Lexer', () => {
     it('returns index for comments and eof', () => {
       const tokens = new Lexer({ comments: true }).tokenize('# some\n<a:a> <b:b> <c:c> . # trailing comment\n# thing');
       expect(tokens).toEqual([
-        { line: 1, prefix: '', type: 'comment', value: ' some', start: 0, end: 7 },
+        { line: 1, prefix: '', type: 'comment', value: ' some', start: 0, end: 6 },
         { line: 2, prefix: '', type: 'IRI', value: 'a:a', start: 0, end: 5 },
         { line: 2, prefix: '', type: 'IRI', value: 'b:b', start: 6, end: 11 },
         { line: 2, prefix: '', type: 'IRI', value: 'c:c', start: 12, end: 17 },
         { line: 2, prefix: '', type: '.', value: '', start: 18, end: 19 },
-        { line: 2, prefix: '', type: 'comment', value: ' trailing comment', start: 19, end: 39 },
+        { line: 2, prefix: '', type: 'comment', value: ' trailing comment', start: 20, end: 38 },
         { line: 3, prefix: '', type: 'comment', value: ' thing', start: 0, end: 7 },
         { line: 3, prefix: '', type: 'eof', value: '', start: 7, end: 7 },
       ]);
