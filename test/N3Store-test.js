@@ -2608,6 +2608,27 @@ describe('EntityIndex', () => {
     expect(entityIndex).toBeInstanceOf(EntityIndex);
   });
 
+  it('should expose opaque term and quad ID operations', () => {
+    const subject = namedNode('s'), predicate = namedNode('p'), object = namedNode('o');
+    const subjectId = entityIndex.intern(subject),
+        predicateId = entityIndex.intern(predicate),
+        objectId = entityIndex.intern(object),
+        quadId = entityIndex.internQuad(subjectId, predicateId, objectId);
+    expect(entityIndex.lookup(subject)).toBe(subjectId);
+    expect(entityIndex.resolve(subjectId)).toEqual(subject);
+    expect(entityIndex.resolve(quadId)).toEqual(quad(subject, predicate, object));
+    expect(entityIndex.intern(quad(subject, predicate, object))).toBe(quadId);
+    expect(entityIndex.resolve(999)).toBeUndefined();
+  });
+
+  it('should intern quads with a named graph from component IDs', () => {
+    const terms = ['s', 'p', 'o', 'g'].map(value => entityIndex.intern(namedNode(value)));
+    const quadId = entityIndex.internQuad(...terms);
+    expect(entityIndex.resolve(quadId)).toEqual(quad(
+      namedNode('s'), namedNode('p'), namedNode('o'), namedNode('g'),
+    ));
+  });
+
   it('custom index should be used when instantiated with store', () => {
     const index = {
       '': 1,

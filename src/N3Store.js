@@ -118,6 +118,9 @@ export class N3EntityIndex {
      // inverse of `_ids`
     this._entities = Object.create(null);
     this._entities[1] = '';
+    // Cache the most recently interned quad, which is common in multiset data.
+    this._lastQuadSubject = this._lastQuadPredicate =
+      this._lastQuadObject = this._lastQuadGraph = this._lastQuadId = 0;
     // `_blankNodeIndex` is the index of the last automatically named blank node
     this._blankNodeIndex = 0;
     this._factory = options.factory || N3DataFactory;
@@ -138,6 +141,12 @@ export class N3EntityIndex {
     return termFromId(id, this._factory);
   }
 
+  // Resolves an opaque numeric ID allocated by this index back to an RDF/JS term.
+  resolve(id) {
+    const termId = this._entities[id];
+    return termId === undefined ? undefined : this._termFromId(termId);
+  }
+
   _termToNumericId(term) {
     if (term.termType === 'Quad') {
       const s = this._termToNumericId(term.subject),
@@ -151,15 +160,44 @@ export class N3EntityIndex {
     return this._ids[termToId(term)];
   }
 
+  // Looks up a term without adding it to the index.
+  lookup(term) {
+    return this._termToNumericId(term);
+  }
+
   _termToNewNumericId(term) {
-    // This assumes that no graph term is present - we may wish to error if there is one
-    const str = term && term.termType === 'Quad' ?
-      `.${this._termToNewNumericId(term.subject)}.${this._termToNewNumericId(term.predicate)}.${this._termToNewNumericId(term.object)}${
-        isDefaultGraph(term.graph) ? '' : `.${this._termToNewNumericId(term.graph)}`
-      }`
-      : termToId(term);
+    if (term && term.termType === 'Quad') {
+      const subject = this._termToNewNumericId(term.subject),
+          predicate = this._termToNewNumericId(term.predicate),
+          object = this._termToNewNumericId(term.object),
+          graph = isDefaultGraph(term.graph) ? 1 : this._termToNewNumericId(term.graph);
+      return this.internQuad(subject, predicate, object, graph);
+    }
+
+    const str = termToId(term);
 
     return this._ids[str] || (this._ids[this._entities[++this._id] = str] = this._id);
+  }
+
+  // Adds a term to the index and returns its opaque numeric ID.
+  intern(term) {
+    return this._termToNewNumericId(term);
+  }
+
+  // Adds a quad from component IDs that were allocated by this index.
+  internQuad(subject, predicate, object, graph = 1) {
+    if (subject === this._lastQuadSubject && predicate === this._lastQuadPredicate &&
+        object === this._lastQuadObject && graph === this._lastQuadGraph)
+      return this._lastQuadId;
+
+    const str = graph === 1 ? `.${subject}.${predicate}.${object}` :
+      `.${subject}.${predicate}.${object}.${graph}`,
+        id = this._ids[str] || (this._ids[this._entities[++this._id] = str] = this._id);
+    this._lastQuadSubject = subject;
+    this._lastQuadPredicate = predicate;
+    this._lastQuadObject = object;
+    this._lastQuadGraph = graph;
+    return this._lastQuadId = id;
   }
 
   createBlankNode(suggestedName) {

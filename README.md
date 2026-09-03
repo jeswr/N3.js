@@ -152,6 +152,57 @@ const parser = new N3.Parser();
 const quadArray = parser.parse(tomAndJerry);
 ```
 
+### Parsing with lexical provenance
+
+`N3.ProvenanceParser` synchronously parses a string and records every lexical
+occurrence of each emitted quad:
+
+```JavaScript
+const source = '<s> <p> "hello"@en .';
+const { quads, provenance, prefixes } = new N3.ProvenanceParser({
+  baseIRI: 'http://example.org/',
+}).parse(source);
+
+const [occurrence] = provenance.get(quads[0]);
+console.log(occurrence.object);
+// { start: { line: 1, column: 8 }, end: { line: 1, column: 18 } }
+```
+
+Ranges are half-open and cover the complete source construct for that term
+occurrence. Lines are one-based; columns are zero-based UTF-16 string indexes.
+This means a range can be converted back to a JavaScript string slice without
+Unicode re-encoding. Literal suffixes and delimiters are included, so ranges
+cover constructs such as `"hello"@en`, `()`, `[ ... ]`, `{ ... }`, and
+`<<( ... )>>` in full. Parser-generated terms that have no source construct,
+such as list links, path nodes, and implicit reifiers, have a `null` range.
+
+`ProvenanceIndex#get(quad)` performs value-based lookup and returns occurrences
+in document order. Iteration yields `[quad, occurrences]` pairs for every
+distinct quad. Returned occurrence objects are snapshots: changing them does
+not change the index. Additional occurrences can be stored with
+`provenance.add(quad, occurrence)`.
+
+An `onQuad(quad, occurrence)` constructor option receives the same complete
+ranges in parse order as soon as they are known. Events emitted before a later
+grammar error are not rolled back. Lexing completes before parsing begins, so a
+lexer error is reported before any `onQuad` events.
+
+Each occurrence has `subject`, `predicate`, `object`, and `graph` fields whose
+value is either `null` or a `{ start: { line, column }, end: { line, column } }`
+range. `ProvenanceIndex#add` expects that same shape. For applications sharing
+the compact index with an `EntityIndex`, `lookup(term)` reads an existing ID,
+`intern(term)` adds or reads one, `resolve(id)` reconstructs its term, and
+`internQuad(subject, predicate, object, graph)` accepts component IDs. These IDs
+are opaque and meaningful only to the `EntityIndex` that allocated them; use an
+index configured with the same data factory as the parser.
+
+The provenance parser currently accepts string input only; use `N3.Parser` or
+`N3.StreamParser` when streaming is required. A custom `factory` must implement
+the RDF/JS data model because provenance lookup and reconstruction are based on
+RDF/JS term values. A custom `lexer` must emit numeric `line`, `start`, and `end`
+coordinates on every token, plus a numeric `endLine` whenever a token spans
+multiple lines.
+
 By default, `N3.Parser` parses a permissive superset of Turtle, TriG, N-Triples, and N-Quads.
 <br>
 For strict compatibility with any of those languages, pass a `format` argument upon creation:

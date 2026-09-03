@@ -31,6 +31,12 @@
              tripleTerm.predicate.value === 'http://example.org/b',
         `expected a triple term object, got ${tripleTerm.termType}`);
 
+      const source = '<http://example.org/s> <http://example.org/p> "value"@en .';
+      const located = new N3.ProvenanceParser().parse(source);
+      const occurrence = located.provenance.get(located.quads[0])[0];
+      assert(source.slice(occurrence.object.start.column, occurrence.object.end.column) === '"value"@en',
+        'provenance range did not cover the complete literal');
+
       const written = await new Promise((resolve, reject) => {
         const writer = new N3.Writer();
         writer.addQuads(quads);

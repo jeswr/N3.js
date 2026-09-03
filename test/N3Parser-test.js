@@ -22,6 +22,18 @@ describe('Parser', () => {
     it('should be a Parser constructor', () => {
       expect(new Parser()).toBeInstanceOf(Parser);
     });
+
+    it('should allow a token hook to delegate to the base implementation', () => {
+      class TokenParser extends Parser {
+        _readToken(token) {
+          this.tokens = (this.tokens || 0) + 1;
+          return super._readToken(token);
+        }
+      }
+      const parser = new TokenParser({ baseIRI: BASE_IRI });
+      expect(parser.parse('<s> <p> <o>.')).toHaveLength(1);
+      expect(parser.tokens).toBeGreaterThan(0);
+    });
   });
 
   describe('A Parser instance', () => {
@@ -4521,6 +4533,19 @@ describe('Parser', () => {
           g2,
         ),
       ])).toBe(true);
+    });
+
+    it('should distinguish quantified terms with an RDF/JS factory without internal IDs', () => {
+      const parser = new Parser({
+        baseIRI: BASE_IRI,
+        format: 'n3',
+        factory: rdfDataModel,
+      });
+      const [quad] = parser.parse('@forAll <x>. <x> <p> <o>.');
+
+      expect(quad.subject.termType).toBe('Variable');
+      expect(quad.predicate).toEqual(rdfDataModel.namedNode(`${BASE_IRI}p`));
+      expect(quad.object).toEqual(rdfDataModel.namedNode(`${BASE_IRI}o`));
     });
 
     it('should use the internal `this` state', () => {

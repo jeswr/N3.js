@@ -4,7 +4,7 @@ import {
   expectBrowserBundleWriter,
 } from './browser-bundle-support';
 import { execSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { runInThisContext } from 'vm';
 
@@ -21,8 +21,7 @@ describeIife('The IIFE browser bundle', () => {
   let N3;
 
   beforeAll(() => {
-    if (!existsSync(bundlePath))
-      execSync('npm run build:browser:iife', { cwd: root });
+    execSync(`"${process.execPath}" scripts/build-browser-bundle.js iife`, { cwd: root });
     // The bundle is `var N3=(()=>{...})();`; evaluating it in this realm (which
     // has the standard globals the bundle relies on) and appending `;N3` returns
     // the global object a browser would expose as `window.N3`.

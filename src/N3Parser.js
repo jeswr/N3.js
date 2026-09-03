@@ -1,6 +1,6 @@
 // **N3Parser** parses N3 documents.
 import N3Lexer from './N3Lexer';
-import N3DataFactory from './N3DataFactory';
+import N3DataFactory, { termToId } from './N3DataFactory';
 import namespaces from './IRIs';
 
 let blankNodePrefix = 0;
@@ -247,8 +247,11 @@ export default class N3Parser {
       return this._error(`Expected entity but got ${token.type}`, token);
     }
     // In N3 mode, replace the entity if it is quantified
-    if (!quantifier && this._n3Mode && (value.id in this._quantified))
-      value = this._quantified[value.id];
+    if (!quantifier && this._n3Mode) {
+      const id = value.id === undefined ? termToId(value) : value.id;
+      if (id in this._quantified)
+        value = this._quantified[id];
+    }
     return value;
   }
 
@@ -627,7 +630,7 @@ export default class N3Parser {
         // The next token is the predicate
         next = this._n3Mode ? this._getPathReader(this._readPredicate) : this._readPredicate;
         // No list tail if this was an empty list
-        if (this._subject === this.RDF_NIL)
+        if (this._isRdfNil(this._subject))
           return next;
       }
       // Was this list the parent's predicate?
@@ -635,7 +638,7 @@ export default class N3Parser {
         // The next token is the object
         next = this._getPathReader(this._readObject, 'predicate');
         // No list tail if this was an empty list
-        if (this._predicate === this.RDF_NIL)
+        if (this._isRdfNil(this._predicate))
           return next;
       }
       // The list was in the parent context's object
@@ -645,7 +648,7 @@ export default class N3Parser {
         if (this._n3Mode)
           next = this._getPathReader(next);
         // No list tail if this was an empty list
-        if (this._object === this.RDF_NIL)
+        if (this._isRdfNil(this._object))
           return next;
       }
       // Close the list by making the head nil
@@ -745,6 +748,12 @@ export default class N3Parser {
       this._emit(list, this.RDF_FIRST, item, this._graph);
     }
     return next;
+  }
+
+  // ### `_isRdfNil` identifies the parser's rdf:nil constant.
+  // Subclasses that carry private per-occurrence wrappers can override this.
+  _isRdfNil(term) {
+    return term === this.RDF_NIL;
   }
 
   // ### `_readDataTypeOrLang` reads an _optional_ datatype or language
@@ -1147,7 +1156,8 @@ export default class N3Parser {
     }
     // Without explicit quantifiers, map entities to a quantified entity
     if (!this._explicitQuantifiers)
-      this._quantified[entity.id] = this._factory[this._quantifier](this._factory.blankNode().value);
+      this._quantified[entity.id === undefined ? termToId(entity) : entity.id] =
+        this._factory[this._quantifier](this._factory.blankNode().value);
     // With explicit quantifiers, output the reified quantifier
     else {
       // If this is the first item, start a new quantifier list
@@ -1525,7 +1535,8 @@ export default class N3Parser {
     return result + iri.substring(segmentStart);
   }
 
-  // ### `_readToken` sends one lexer token to the active grammar reader
+  // ### `_readToken` sends one lexer token to the active grammar reader.
+  // Subclasses can extend token processing and delegate back to this method.
   _readToken(token) {
     return this._readCallback = this._readCallback(token);
   }
