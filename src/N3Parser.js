@@ -1525,6 +1525,11 @@ export default class N3Parser {
     return result + iri.substring(segmentStart);
   }
 
+  // ### `_readToken` sends one lexer token to the active grammar reader
+  _readToken(token) {
+    return this._readCallback = this._readCallback(token);
+  }
+
   // ## Public methods
 
   // ### `parse` parses the N3 input and emits each parsed quad through the onQuad callback.
@@ -1565,9 +1570,7 @@ export default class N3Parser {
       const quads = [];
       let error;
       this._callback = (e, t) => { e ? (error = e) : t && quads.push(t); };
-      this._lexer.tokenize(input).every(token => {
-        return this._readCallback = this._readCallback(token);
-      });
+      this._lexer.tokenize(input).every(token => this._readToken(token));
       if (error) throw error;
       return quads;
     }
@@ -1576,7 +1579,7 @@ export default class N3Parser {
       if (error !== null)
         this._callback(error), this._callback = noop;
       else if (this._readCallback)
-        this._readCallback = this._readCallback(token);
+        this._readToken(token);
     };
 
     // Enable checking for comments on every token when a commentCallback has been set
@@ -1591,7 +1594,7 @@ export default class N3Parser {
           if (token.type === 'comment')
             onComment(token.value);
           else
-            this._readCallback = this._readCallback(token);
+            this._readToken(token);
         }
       };
     }

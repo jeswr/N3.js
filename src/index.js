@@ -1,5 +1,6 @@
 import Lexer from './N3Lexer';
 import Parser from './N3Parser';
+import ProvenanceParser, { ProvenanceIndex } from './N3ProvenanceParser';
 import Writer from './N3Writer';
 import Store, { N3EntityIndex as EntityIndex } from './N3Store';
 import StoreFactory from './N3StoreFactory';
@@ -29,6 +30,8 @@ import {
 export {
   Lexer,
   Parser,
+  ProvenanceParser,
+  ProvenanceIndex,
   Writer,
   Store,
   StoreFactory,
@@ -59,6 +62,8 @@ export {
 export default {
   Lexer,
   Parser,
+  ProvenanceParser,
+  ProvenanceIndex,
   Writer,
   Store,
   StoreFactory,
