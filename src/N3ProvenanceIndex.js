@@ -16,10 +16,6 @@ export class ProvenanceIndex {
       occurrences.push(occurrence);
   }
 
-  _quad(quadId) {
-    return this._entityIndex._termFromId(this._entityIndex._entities[quadId]);
-  }
-
   get(quad) {
     const quadId = this._entityIndex._termToNumericId(quad);
     const occurrences = this._quadOccurrences[quadId];
@@ -28,6 +24,7 @@ export class ProvenanceIndex {
 
   *[Symbol.iterator]() {
     for (const quadId in this._quadOccurrences)
-      yield [this._quad(quadId), this._quadOccurrences[quadId]];
+      yield [this._entityIndex._termFromId(this._entityIndex._entities[quadId]),
+        this._quadOccurrences[quadId]];
   }
 }
