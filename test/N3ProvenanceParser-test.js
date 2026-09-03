@@ -245,11 +245,12 @@ describe('ProvenanceParser', () => {
         .toStrictEqual(['"typed"', '"directed"', '42']);
     });
 
-    it('uses a null source range for implicit reification terms', () => {
+    it('uses a null source token for implicit reification terms', () => {
       const { quads, provenance } = parse('<s> <p> <o> ~ .');
       const reifies = quads.find(q => q.predicate.value.endsWith('#reifies'));
       expect(reifies).toBeDefined();
-      for (const term of [reifies, reifies.subject, reifies.object]) {
+      expect(Object.getOwnPropertySymbols(reifies)).toHaveLength(0);
+      for (const term of [reifies.subject, reifies.object]) {
         const symbols = Object.getOwnPropertySymbols(term);
         expect(symbols).toHaveLength(1);
         expect(term[symbols[0]]).toBeNull();
@@ -258,19 +259,12 @@ describe('ProvenanceParser', () => {
       expect(provenance.get(reifies)[0].object).toBeNull();
     });
 
-    it('attaches private source ranges to terms and emitted quads', () => {
-      const doc = '<s> <p> <o> .';
-      const { quads } = parse(doc);
-      for (const [term, lexical] of [
-        [quads[0].subject, '<s>'],
-        [quads[0].predicate, '<p>'],
-        [quads[0].object, '<o>'],
-        [quads[0], '.'],
-      ]) {
-        const symbols = Object.getOwnPropertySymbols(term);
-        expect(symbols).toHaveLength(1);
-        expect(slice(doc, term[symbols[0]])).toBe(lexical);
-      }
+    it('attaches a private source token to lexical terms', () => {
+      const { quads } = parse('<s> <p> <o> .');
+      expect(Object.getOwnPropertySymbols(quads[0])).toHaveLength(0);
+      expect(Object.getOwnPropertySymbols(quads[0].subject)).toHaveLength(1);
+      expect(Object.getOwnPropertySymbols(quads[0].predicate)).toHaveLength(1);
+      expect(Object.getOwnPropertySymbols(quads[0].object)).toHaveLength(1);
     });
 
     it('locates each use of a quantified entity at its own token', () => {
