@@ -32,7 +32,7 @@ const lineModeRegExps = {
   _langcode: true,
   _dircode: true,
   _blank: true,
-  _comment: true,
+  _commentLine: true,
   _whitespace: true,
 };
 const invalidRegExp = /$0^/;
@@ -59,7 +59,7 @@ export default class N3Lexer {
     this._n3Verb = /^(?:has|is|of)(?=[\s#()\[\]\{\}"'<>?_+\-0-9])/;
     this._n3Id = /^id(?=[\s#<])/;
     this._shortPredicates = /^a(?=[\s#()\[\]\{\}"'<>])/;
-    this._comment = /#([^\n\r]*)/;
+    this._commentLine = /^[ \t]*#([^\n\r]*)(?:\r\n|\n|\r)[ \t]*/;
     this._whitespace = /^[ \t]+/;
     options = options || {};
 
@@ -95,7 +95,7 @@ export default class N3Lexer {
     while (true) {
       // Consume one separator line at a time, including its following indentation.
       while (true) {
-        let charCode = input.charCodeAt(0), separatorLength = 0, comment;
+        let charCode = input.charCodeAt(0), separatorLength = 0;
         if (charCode === SPACE || charCode === TAB) {
           const next = input.charCodeAt(1);
           separatorLength = next === SPACE || next === TAB ?
@@ -103,11 +103,26 @@ export default class N3Lexer {
           charCode = input.charCodeAt(separatorLength);
         }
         if (charCode === HASH) {
-          comment = this._comment.exec(input);
-          separatorLength += comment[0].length;
-          charCode = input.charCodeAt(separatorLength);
+          const comment = this._commentLine.exec(input);
+          if (comment) {
+            if (this.comments)
+              emitToken('comment', comment[1], '', this._line, comment[0].length);
+            input = input.slice(comment[0].length);
+            currentLineLength = input.length;
+            this._line++;
+          }
+          else {
+            // A comment without a line ending stays buffered until EOF.
+            input = input.slice(separatorLength);
+            if (!inputFinished)
+              return this._input = input;
+            if (this.comments)
+              emitToken('comment', input.slice(1), '', this._line, input.length);
+            input = '';
+            break;
+          }
         }
-        if (charCode === LF || charCode === CR) {
+        else if (charCode === LF || charCode === CR) {
           separatorLength += charCode === CR && input.charCodeAt(separatorLength + 1) === LF ? 2 : 1;
           // Indentation is part of the same separator match as the newline.
           const next = input.charCodeAt(separatorLength);
@@ -116,23 +131,13 @@ export default class N3Lexer {
             separatorLength += following === SPACE || following === TAB ?
               this._whitespace.exec(input.slice(separatorLength))[0].length : 1;
           }
-          if (this.comments && comment)
-            emitToken('comment', comment[1], '', this._line, separatorLength);
           input = input.slice(separatorLength);
           currentLineLength = input.length;
           this._line++;
         }
         else {
-          // Without a newline, consume only horizontal whitespace for now.
           if (separatorLength !== 0)
-            input = input.slice(comment ? comment.index : separatorLength);
-          if (comment) {
-            if (!inputFinished)
-              return this._input = input;
-            if (this.comments)
-              emitToken('comment', comment[1], '', this._line, input.length);
-            input = '';
-          }
+            input = input.slice(separatorLength);
           break;
         }
       }
