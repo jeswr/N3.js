@@ -14,6 +14,64 @@ describe('Lexer', () => {
   });
 
   describe('A Lexer instance', () => {
+    it.each([
+      ['a', 'abbreviation', 'a', ''],
+      ['true', 'literal', 'true', 'http://www.w3.org/2001/XMLSchema#boolean'],
+      ['false', 'literal', 'false', 'http://www.w3.org/2001/XMLSchema#boolean'],
+      ['id', 'id', '', ''],
+    ])('recognizes fixed token %s at every stream split', (word, type, value, prefix) => {
+      const input = `${word} <s>`;
+      expect(new Lexer().tokenize(input)[0]).toEqual({
+        type, value, prefix, line: 1, start: 0, end: word.length,
+      });
+      for (let split = 0; split <= input.length; split++) {
+        const stream = new EventEmitter(), tokens = [];
+        new Lexer().tokenize(stream, (error, token) => {
+          expect(error).toBeNull();
+          tokens.push({ type: token.type, value: token.value, prefix: token.prefix });
+        });
+        stream.emit('data', input.slice(0, split));
+        stream.emit('data', input.slice(split));
+        stream.emit('end');
+        expect(tokens).toEqual([
+          { type, value, prefix },
+          { type: 'IRI', value: 's', prefix: '' },
+          { type: 'eof', value: '', prefix: '' },
+        ]);
+      }
+    });
+
+    it.each(['a', 'true', 'false', 'id'])('keeps %s as a prefix when a stream continues with a colon', word => {
+      const stream = new EventEmitter(), tokens = [];
+      new Lexer().tokenize(stream, (error, token) => {
+        expect(error).toBeNull();
+        tokens.push({ type: token.type, value: token.value, prefix: token.prefix });
+      });
+      stream.emit('data', word);
+      expect(tokens).toEqual([]);
+      stream.emit('data', ':local ');
+      stream.emit('end');
+      expect(tokens).toEqual([
+        { type: 'prefixed', value: 'local', prefix: word },
+        { type: 'eof', value: '', prefix: '' },
+      ]);
+    });
+
+    it.each(['a', 'true', 'false', 'id'])('requires a boundary after %s at EOF', word => {
+      expect(() => new Lexer().tokenize(word)).toThrow(`Unexpected "${word}" on line 1.`);
+    });
+
+    it.each(['a', 'true', 'false', 'id'])('rejects fixed token %s in line mode', word => {
+      expect(() => new Lexer({ lineMode: true }).tokenize(`${word} `))
+        .toThrow(`Unexpected "${word}" on line 1.`);
+    });
+
+    it.each([
+      ['a', 'abbreviation'], ['true', 'literal'], ['false', 'literal'],
+    ])('recognizes fixed token %s with N3 features disabled', (word, type) => {
+      expect(new Lexer({ n3: false }).tokenize(`${word} `)[0]).toMatchObject({ type, value: word });
+    });
+
     it('should tokenize the empty string', shouldTokenize('',
                    { type: 'eof', line: 1 }));
 
