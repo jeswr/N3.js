@@ -39,26 +39,6 @@ function isClosedRange(range) {
   return range === null || !Array.isArray(range) || range[4];
 }
 
-function appendOccurrence(target, occurrence) {
-  const startOffset = target.length;
-  for (let index = 0; index < components.length; index++) {
-    const component = components[index], offset = startOffset + index * valuesPerRange;
-    const range = occurrence[component];
-    if (range === null) {
-      target[offset] = 0;
-      target[offset + 1] = 0;
-      target[offset + 2] = 0;
-      target[offset + 3] = 0;
-    }
-    else {
-      target[offset] = range.start.line;
-      target[offset + 1] = range.start.column;
-      target[offset + 2] = range.end.line;
-      target[offset + 3] = range.end.column;
-    }
-  }
-}
-
 function appendPending(target, pending) {
   for (const occurrence of pending)
     appendRanges(target, occurrence[0], occurrence[1], occurrence[2], occurrence[3]);
@@ -117,7 +97,13 @@ export class ProvenanceIndex {
   add(quad, occurrence) {
     // Pack first so malformed public input cannot partially mutate the index.
     const packed = [];
-    appendOccurrence(packed, occurrence);
+    for (const component of components) {
+      const range = occurrence[component];
+      if (range === null)
+        packed.push(0, 0, 0, 0);
+      else
+        packed.push(range.start.line, range.start.column, range.end.line, range.end.column);
+    }
 
     const quadId = this._entityIndex.intern(quad);
     this._finalize(quadId);
