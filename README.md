@@ -488,17 +488,21 @@ Supported values:
   parent store until the first operation that materializes it (a mutation, or a
   materializing read such as `size` or `has`), after which it is frozen to a
   snapshot. Parent mutations made before that point remain visible in the view.
+  In the next major version, only mutating operations will materialize a lazy
+  view; reads such as `size` and `has` will leave it live.
 - `'snapshot'` — the view reflects the parent contents *at the time of*
   `match()`. Later parent mutations never affect it. This is the most
-  spec-correct interpretation of an RDF/JS dataset.
+  spec-correct interpretation of an RDF/JS dataset and will become the default
+  in the next major version.
 - `'forwarded'` — the view always reflects the parent state: matching parent
   mutations are forwarded to the view, and mutations on the view (`add`,
   `delete`, `addAll`, `deleteMatches`, `import`) are written through to the
   parent. Nested matches remain forwarded to the root, with every ancestor's
-  pattern applied. `add` and `addAll` throw upon encountering a quad outside
-  that combined pattern, while `import` emits an error on its input stream.
-  `delete` ignores a quad outside the pattern, and `deleteMatches` only removes
-  matching quads visible in the view.
+  pattern applied. `add`, `addAll`, and `delete` throw upon encountering a quad
+  outside that combined pattern, while `import` emits an error on its input stream.
+  `deleteMatches` throws if its pattern conflicts with the view, and otherwise
+  only removes matching quads visible in the view; omitted terms are wildcards.
+  Deletions from a view with conflicting ancestor patterns also throw.
 
 A sub-view inherits its parent's `matchSemantics`. The same value can be
 supplied explicitly, but a different value throws. Allowing a sub-view to
@@ -517,9 +521,10 @@ Such views observe the parent store: a `'snapshot'` view until it materializes,
 is frozen by a matching mutation, or is detached; a `'forwarded'` view until it
 is detached. The store holds a strong reference to each observing view —
 retaining it against garbage collection — and checks every mutation against
-each open view's pattern. Call `view.detach()` to release a view early: it is
-frozen to its contents at detach time and no longer taxes the store. Detaching
-one view does not detach sub-views that were already created from it.
+each open view's pattern. Internal cleanup uses `view._detach()` to freeze a
+view to its current contents and release its observer. This is an internal
+method, not part of the public API. Detaching one view does not detach sub-views
+that were already created from it.
 
 ## Reasoning
 

@@ -80,10 +80,51 @@ runOpenViewsWithMutations('lazy (default)', undefined);
 runOpenViewsWithMutations('snapshot', { matchSemantics: 'snapshot' });
 runOpenViewsWithMutations('forwarded', { matchSemantics: 'forwarded' });
 
+/* Duplicate additions with and without observers */
+function runDuplicateAdds(label, options) {
+  const store = freshStore();
+  const quads = [...store];
+  const view = store.match(null, null, null, null, options);
+  TEST = `- ${label}: ${total * 16} duplicate additions`;
+  console.time(TEST);
+  for (let i = 0; i < 16; i++)
+    for (const quad of quads)
+      assert.equal(store.addQuad(quad), false);
+  console.timeEnd(TEST);
+  assert.equal(store.size, total);
+  assert.equal(view._filtered, undefined);
+}
+
+runDuplicateAdds('lazy (default)', undefined);
+runDuplicateAdds('snapshot', { matchSemantics: 'snapshot' });
+runDuplicateAdds('forwarded', { matchSemantics: 'forwarded' });
+
+/* Forwarding into materialized views sharing the parent's entity index */
+function runMaterializedMutations() {
+  const store = freshStore();
+  const quads = [...store];
+  const views = Array.from({ length: 16 }, () =>
+    store.match(null, null, null, null, { matchSemantics: 'forwarded' }));
+  for (const view of views)
+    assert.equal(view.size, total);
+  TEST = `- forwarded: ${total * 2} mutations with ${views.length} materialized views`;
+  console.time(TEST);
+  for (const quad of quads) {
+    store.removeQuad(quad);
+    store.addQuad(quad);
+  }
+  console.timeEnd(TEST);
+  assert.equal(store.size, total);
+  for (const view of views)
+    assert.equal(view.size, total);
+}
+
+runMaterializedMutations();
+
 /* Mid-iteration mutation */
 function runMidStreamSwitch(label, options) {
   const store = freshStore();
-  TEST = `- ${label}: ${dim} iterations with a mid-stream mutation and detach()`;
+  TEST = `- ${label}: ${dim} iterations with a mid-stream mutation and _detach()`;
   let elapsed = 0n;
   for (let i = 0; i < dim; i++) {
     const start = process.hrtime.bigint();
@@ -97,7 +138,7 @@ function runMidStreamSwitch(label, options) {
       }
     }
     assert.equal(count, dim);
-    view.detach();
+    view._detach();
     elapsed += process.hrtime.bigint() - start;
   }
   assert.equal(store._observers, null);

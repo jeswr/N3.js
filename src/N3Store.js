@@ -457,6 +457,15 @@ export default class N3Store {
     // Convert terms to internal string representation
     graph = graph ? this._termToNewNumericId(graph) : 1;
 
+    // Map long IRIs to shared numeric identifiers before updating the indexes.
+    subject   = this._termToNewNumericId(subject);
+    predicate = this._termToNewNumericId(predicate);
+    object    = this._termToNewNumericId(object);
+    return this._addQuad(subject, predicate, object, graph);
+  }
+
+  // ### `_addQuad` adds a quad using identifiers from this store's entity index.
+  _addQuad(subject, predicate, object, graph) {
     // Find the graph that will contain the triple
     let graphItem = this._graphs[graph];
     // Create the graph if it doesn't exist yet
@@ -471,16 +480,12 @@ export default class N3Store {
       Object.freeze(graphItem);
     }
 
-    // Since entities can often be long IRIs, we avoid storing them in every index.
-    // Instead, we have a separate index that maps entities to numbers,
-    // which are then used as keys in the other indexes.
-    subject   = this._termToNewNumericId(subject);
-    predicate = this._termToNewNumericId(predicate);
-    object    = this._termToNewNumericId(object);
-
     // Notify observers before inserting a new quad so snapshots retain their prior contents
-    if (this._observers !== null && !hasInIndex(graphItem.subjects, subject, predicate, object))
+    if (this._observers !== null) {
+      if (hasInIndex(graphItem.subjects, subject, predicate, object))
+        return false;
       this._notifyObservers(subject, predicate, object, graph, true);
+    }
 
     if (!this._addToIndex(graphItem.subjects,   subject,   predicate, object))
       return false;
@@ -536,15 +541,19 @@ export default class N3Store {
     // Convert terms to internal string representation
     graph = graph ? this._termToNumericId(graph) : 1;
 
-    // Find internal identifiers for all components
-    // and verify the quad exists.
+    if (!(subject   = subject && this._termToNumericId(subject)) ||
+        !(predicate = predicate && this._termToNumericId(predicate)) ||
+        !(object    = object && this._termToNumericId(object)))
+      return false;
+    return this._removeQuad(subject, predicate, object, graph);
+  }
+
+  // ### `_removeQuad` removes a quad using identifiers from this store's entity index.
+  _removeQuad(subject, predicate, object, graph) {
+    // Verify the quad exists before notifying observers or changing any indexes.
     const graphs = this._graphs;
-    let graphItem, subjects, predicates;
-    if (!(subject    = subject && this._termToNumericId(subject)) || !(predicate = predicate && this._termToNumericId(predicate)) ||
-        !(object     = object && this._termToNumericId(object))  || !(graphItem = graphs[graph])  ||
-        !(subjects   = graphItem.subjects[subject]) ||
-        !(predicates = subjects[predicate]) ||
-        !(object in predicates))
+    const graphItem = graphs[graph];
+    if (!graphItem || !hasInIndex(graphItem.subjects, subject, predicate, object))
       return false;
 
     // Notify observers before the mutation
@@ -1315,7 +1324,7 @@ class DatasetCoreAndReadableStream extends Readable {
   // ### `_assertMatchesPattern` rejects a Quad outside this view.
   _assertMatchesPattern(quad) {
     if (!this._matchesQuad(quad))
-      throw new Error('Cannot add a quad that does not match the forwarded view pattern');
+      throw new Error('Quad does not match the forwarded view pattern');
   }
 
   // ### `_sourceIterator` returns an iterator over the current backing store.
@@ -1347,28 +1356,16 @@ class DatasetCoreAndReadableStream extends Readable {
     // Keep using the parent until materialization
     if (this._semantics === 'forwarded') {
       if (this._filtered) {
-        const quad = this._toQuad(subjectId, predicateId, objectId, graphId);
         if (added)
-          this._filtered.addQuad(quad);
+          this._filtered._addQuad(subjectId, predicateId, objectId, graphId);
         else
-          this._filtered.removeQuad(quad);
+          this._filtered._removeQuad(subjectId, predicateId, objectId, graphId);
       }
       return;
     }
 
     // Capture the pre-mutation snapshot
     this._filtered = this.filtered;
-  }
-
-  // ### `_toQuad` reconstructs a Quad from numeric ids.
-  _toQuad(subjectId, predicateId, objectId, graphId) {
-    const { n3Store } = this, entities = n3Store._entities;
-    return n3Store._factory.quad(
-      n3Store._termFromId(entities[subjectId]),
-      n3Store._termFromId(entities[predicateId]),
-      n3Store._termFromId(entities[objectId]),
-      n3Store._termFromId(entities[graphId]),
-    );
   }
 
   get filtered() {
@@ -1454,8 +1451,8 @@ class DatasetCoreAndReadableStream extends Readable {
     }
   }
 
-  // ### `detach` freezes the view and stops observing the parent.
-  detach() {
+  // ### `_detach` freezes the view and stops observing the parent.
+  _detach() {
     this._filtered = this.filtered;
     this._detachObserver();
     // Lazy views deferred this state
@@ -1485,12 +1482,16 @@ class DatasetCoreAndReadableStream extends Readable {
 
   deleteMatches(subject, predicate, object, graph) {
     if (this._semantics === 'forwarded') {
-      const pattern = !this._matchesNothing && intersectMatchPatterns(
+      // No deletion pattern can match a view with conflicting ancestor patterns.
+      if (this._matchesNothing)
+        throw new Error('Cannot delete from a conflicting forwarded view pattern');
+      const pattern = intersectMatchPatterns(
         [this.subject, this.predicate, this.object, this.graph],
         [subject, predicate, object, graph],
       );
-      if (pattern)
-        this.n3Store.deleteMatches(...pattern);
+      if (!pattern)
+        throw new Error('Deletion pattern does not match the forwarded view pattern');
+      this.n3Store.deleteMatches(...pattern);
       return this;
     }
     return this.filtered.deleteMatches(subject, predicate, object, graph);
@@ -1593,8 +1594,8 @@ class DatasetCoreAndReadableStream extends Readable {
 
   delete(quad) {
     if (this._semantics === 'forwarded') {
-      if (this._matchesQuad(quad))
-        this.n3Store.removeQuad(quad);
+      this._assertMatchesPattern(quad);
+      this.n3Store.removeQuad(quad);
       return this;
     }
     return this.filtered.delete(quad);

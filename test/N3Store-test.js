@@ -798,7 +798,7 @@ describe('Store', () => {
       });
 
       it('should detach a lazy view as a snapshot', () => {
-        const view = buildStore().match(namedNode('s1'), null, null).detach();
+        const view = buildStore().match(namedNode('s1'), null, null)._detach();
         const nested = view.match(null, namedNode('p1'));
         view.add(q('s1', 'p1', 'oNEW'));
         expect([...view]).toHaveLength(6);
@@ -980,6 +980,21 @@ describe('Store', () => {
       });
 
       it.each(['snapshot', 'forwarded'])(
+        'should not materialize a %s view or freeze its iteration for a duplicate add',
+        matchSemantics => {
+          const store = buildStore();
+          const view = store.match(namedNode('s1'), null, null, null, { matchSemantics });
+          const iterator = view[Symbol.iterator]();
+          const first = iterator.next().value;
+          expect(store.addQuad(first)).toBe(false);
+          expect(view._filtered).toBeUndefined();
+          expect(view._baselines).toBe(null);
+          expect(values([first, ...iterator])).toEqual(initialValues);
+          expect(store.size).toBe(6);
+        },
+      );
+
+      it.each(['snapshot', 'forwarded'])(
         'should keep a %s toStream() stable across parent mutations',
         async matchSemantics => {
           const quads = Array.from({ length: 40 }, (_, i) => q(`s${i}`, 'p1', `o${i}`));
@@ -998,7 +1013,7 @@ describe('Store', () => {
           expect(view._activeIterators).toBe(0);
           expect(view._baselines).toBe(null);
           expect(view.has(quads[39])).toBe(matchSemantics === 'snapshot');
-          view.detach();
+          view._detach();
         },
       );
 
@@ -1089,12 +1104,14 @@ describe('Store', () => {
           expect(store._observers.size).toBe(1);
           expect([...child]).toHaveLength(0);
           expect([...leaf]).toHaveLength(0);
-          expect(child.deleteMatches()).toBe(child);
+          expect(() => child.deleteMatches()).toThrow('conflicting forwarded view pattern');
+          expect(() => leaf.delete(q('s2', 'p1', 'oX')))
+            .toThrow('Quad does not match the forwarded view pattern');
           expect(store.size).toBe(6);
           store.addQuad(q('s2', 'p1', 'oNEW'));
           expect([...child]).toHaveLength(0);
           expect(() => child.add(q('s2', 'p1', 'oCHILD')))
-            .toThrow('Cannot add a quad that does not match the forwarded view pattern');
+            .toThrow('Quad does not match the forwarded view pattern');
           expect(store.has(q('s2', 'p1', 'oCHILD'))).toBe(false);
         });
 
@@ -1124,7 +1141,7 @@ describe('Store', () => {
           const child = parent.match(null, namedNode('p1'));
 
           expect(() => child.add(q('s1', 'p2', 'oNEW')))
-            .toThrow('Cannot add a quad that does not match the forwarded view pattern');
+            .toThrow('Quad does not match the forwarded view pattern');
           expect(child.deleteMatches()).toBe(child);
           expect(store.has(q('s1', 'p1', 'o1'))).toBe(false);
           expect(store.has(q('s1', 'p2', 'o2'))).toBe(true);
@@ -1251,14 +1268,14 @@ describe('Store', () => {
           expect(sub.has(q('s1', 'p1', 'oNEW'))).toBe(false);
         });
 
-        it('should support detach() before and after materialization', () => {
-          view.detach();
+        it('should support _detach() before and after materialization', () => {
+          view._detach();
           expect(store._observers).toBe(null);
           store.addQuad(q('s1', 'p1', 'oNEW'));
           expect([...view]).toHaveLength(5);
           const other = store.match(namedNode('s1'), null, null, null, opts);
           expect(other.size).toBe(6);
-          expect(other.detach().size).toBe(6);
+          expect(other._detach().size).toBe(6);
           expect(store._observers).toBe(null);
         });
       });
@@ -1356,7 +1373,7 @@ describe('Store', () => {
               dataset.delete(quad);
               dataset.add(replacement);
               expect(() => dataset.add(outside))
-                .toThrow('Cannot add a quad that does not match the forwarded view pattern');
+                .toThrow('Quad does not match the forwarded view pattern');
               return quad;
             });
 
@@ -1430,7 +1447,7 @@ describe('Store', () => {
 
         it('should reject additions outside the view pattern', () => {
           const matching = q('s1', 'p1', 'oA'), nonMatching = q('s2', 'p1', 'oB');
-          const message = 'Cannot add a quad that does not match the forwarded view pattern';
+          const message = 'Quad does not match the forwarded view pattern';
 
           expect(() => view.add(nonMatching)).toThrow(message);
           expect(store.has(nonMatching)).toBe(false);
@@ -1441,13 +1458,36 @@ describe('Store', () => {
 
         it('should constrain deletions to the view pattern', () => {
           const outside = q('s2', 'p1', 'oX');
-          expect(view.delete(outside)).toBe(view);
+          expect(() => view.delete(outside)).toThrow('Quad does not match the forwarded view pattern');
           expect(store.has(outside)).toBe(true);
-          expect(view.deleteMatches(namedNode('s2'))).toBe(view);
+          expect(() => view.deleteMatches(namedNode('s2')))
+            .toThrow('Deletion pattern does not match the forwarded view pattern');
           expect(store.has(outside)).toBe(true);
           expect(view.deleteMatches()).toBe(view);
           expect([...view]).toHaveLength(0);
           expect(store.has(outside)).toBe(true);
+        });
+
+        it.each([0, 1, 2, 3])('should reject deletions conflicting with term %s of a nested view', index => {
+          const matching = q('s1', 'p1', 'o1', 'g1');
+          const terms = [matching.subject, matching.predicate, matching.object, matching.graph];
+          const pattern = [null, null, null, null];
+          pattern[index] = terms[index];
+          const child = view.match(...pattern);
+          const outside = terms.slice();
+          outside[index] = namedNode('outside');
+          const outsideQuad = quad(...outside);
+          store.addQuad(outsideQuad);
+          const before = [...store];
+
+          expect(() => child.delete(outsideQuad)).toThrow('Quad does not match the forwarded view pattern');
+          expect(() => child.deleteMatches(...outside))
+            .toThrow('Deletion pattern does not match the forwarded view pattern');
+          expect([...store]).toEqual(before);
+          // A matching quad that is absent remains a no-op.
+          expect(child.delete(matching)).toBe(child);
+          expect(child.deleteMatches(...terms)).toBe(child);
+          expect([...store]).toEqual(before);
         });
 
         it('should emit an error when import contains a quad outside the view pattern', async () => {
@@ -1456,7 +1496,7 @@ describe('Store', () => {
           const error = new Promise(resolve => stream.on('error', resolve));
           expect(view.import(stream)).toBe(stream);
           await expect(error).resolves.toHaveProperty(
-            'message', 'Cannot add a quad that does not match the forwarded view pattern');
+            'message', 'Quad does not match the forwarded view pattern');
           expect(store.has(nonMatching)).toBe(false);
         });
 
@@ -1474,6 +1514,32 @@ describe('Store', () => {
           expect(view.has(q('s1', 'p1', 'oNEW'))).toBe(true);
           expect(view.has(q('s1', 'p1', 'o0'))).toBe(false);
           expect(view.size).toBe(5);
+        });
+
+        it.each(['', 'g1'])('should update shared indexes without constructing quads in graph %p', graph => {
+          const factory = { ...DataFactory, quad: jest.fn(DataFactory.quad) };
+          const original = q('s1', 'p1', 'o1', graph);
+          const replacement = q('s1', 'p2', 'o2', graph);
+          store = new Store([original], { factory });
+          view = store.match(namedNode('s1'), null, null, null, opts);
+          expect(view.size).toBe(1);
+          const snapshot = view.filtered.match(null, null, null, null, { matchSemantics: 'snapshot' });
+
+          // Remove the last quad, then recreate the graph with different index branches.
+          store.removeQuad(original);
+          expect(view.size).toBe(0);
+          store.addQuad(replacement);
+          expect(view.size).toBe(1);
+          expect(factory.quad).not.toHaveBeenCalled();
+          expect(view.has(original)).toBe(false);
+          expect(view.has(replacement)).toBe(true);
+          expect([...snapshot]).toEqual([original]);
+          expect([...view]).toEqual([replacement]);
+          for (const pattern of [[null, replacement.predicate], [null, null, replacement.object]]) {
+            const seen = [];
+            view.forEach(quad => seen.push(quad), ...pattern);
+            expect(seen).toEqual([replacement]);
+          }
         });
 
         it('should keep an active iterator stable when materialized', () => {
@@ -1552,15 +1618,15 @@ describe('Store', () => {
           expect(view.has(q('s1', 'p1', 'oU'))).toBe(false);
         });
 
-        it('should stop observing the parent after detach()', () => {
-          expect(view.detach()).toBe(view);
+        it('should stop observing the parent after _detach()', () => {
+          expect(view._detach()).toBe(view);
           expect(store._observers).toBe(null);
           store.addQuad(q('s1', 'p1', 'oNEW'));
           expect([...view]).toHaveLength(5);
           view.add(q('s1', 'p1', 'oLOCAL'));
           expect(view.has(q('s1', 'p1', 'oLOCAL'))).toBe(true);
           expect(store.has(q('s1', 'p1', 'oLOCAL'))).toBe(false);
-          expect(view.detach()).toBe(view);
+          expect(view._detach()).toBe(view);
           expect(view.size).toBe(6);
         });
 
@@ -1568,7 +1634,7 @@ describe('Store', () => {
           store = new Store([q('s1', 'p1', 'o1'), q('s2', 'p1', 'o2')]);
           view = store.match(null, null, null, null, opts);
           const seen = valuesWithMutationAfterFirstQuad(view, first => {
-            view.detach();
+            view._detach();
             removeOtherSubject(store, first);
           });
           expect(seen).toEqual(['o1', 'o2']);
@@ -1588,11 +1654,11 @@ describe('Store', () => {
 
         it('should detach nested forwarded views independently', () => {
           const sub = view.match(null, namedNode('p1'));
-          view.detach();
+          view._detach();
           store.addQuad(q('s1', 'p1', 'oROOT'));
           expect(view.has(q('s1', 'p1', 'oROOT'))).toBe(false);
           expect(sub.has(q('s1', 'p1', 'oROOT'))).toBe(true);
-          expect(sub.detach()).toBe(sub);
+          expect(sub._detach()).toBe(sub);
           expect(store._observers).toBe(null);
         });
 
@@ -1608,7 +1674,7 @@ describe('Store', () => {
           expect([...view]).toHaveLength(6);
           expect(view.add(q('s3', 'p1', 'oD'))).toBe(view);
           expect(() => view.add(q('s3', 'p1', 'oG', 'g1')))
-            .toThrow('Cannot add a quad that does not match the forwarded view pattern');
+            .toThrow('Quad does not match the forwarded view pattern');
           store.addQuad(q('s3', 'p1', 'oG', 'g1'));
           expect([...view]).toHaveLength(7);
           expect(view.has(q('s3', 'p1', 'oG', 'g1'))).toBe(false);
