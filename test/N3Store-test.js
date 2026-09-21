@@ -781,6 +781,26 @@ describe('Store', () => {
         expect([...view]).toHaveLength(6);
       });
 
+      it.each(['WeakRef', 'FinalizationRegistry'])(
+        'should preserve lazy views but reject observing modes without %s', api => {
+          const original = global[api];
+          global[api] = undefined;
+          try {
+            const store = buildStore();
+            expect([...store.match()]).toHaveLength(6);
+            for (const matchSemantics of ['snapshot', 'forwarded']) {
+              const message = 'Non-lazy matchSemantics requires WeakRef and FinalizationRegistry support';
+              expect(() => new Store([], { matchSemantics })).toThrow(message);
+              expect(() => store.match(null, null, null, null, { matchSemantics })).toThrow(message);
+            }
+            expect(store._observers).toBe(null);
+          }
+          finally {
+            global[api] = original;
+          }
+        },
+      );
+
       it('should preserve match() arity', () => {
         const store = buildStore();
         expect(store.match).toHaveLength(4);

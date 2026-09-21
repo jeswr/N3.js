@@ -8,6 +8,15 @@ import N3Writer from './N3Writer';
 const ITERATOR = Symbol('iter');
 const SIZE = Symbol('size');
 
+// Neither a registration nor its cleanup record may keep a view or store alive.
+// Initialize lazily so importing N3 and using lazy views needs no weak-reference APIs.
+let observerRegistry;
+function finalizeObserver({ store, observer }) {
+  const target = store.deref();
+  if (target)
+    target._removeObserver(observer);
+}
+
 function hasInIndex(index0, key0, key1, key2) {
   const index1 = index0 && index0[key0];
   const index2 = index1 && index1[key1];
@@ -189,7 +198,7 @@ export default class N3Store {
     this._size = 0;
     // `_graphs` contains subject, predicate, and object indexes per graph
     this._graphs = Object.create(null);
-    // `_observers` contains callbacks notified before every mutation
+    // `_observers` contains weak references to views notified before every mutation
     this._observers = null;
 
     // Shift parameters if `quads` is not given
@@ -406,22 +415,35 @@ export default class N3Store {
   }
 
   // ### `_addObserver` registers a mutation observer.
-  _addObserver(observer) {
+  _addObserver(view) {
+    const observer = new WeakRef(view);
+    const registry = observerRegistry || (observerRegistry = new FinalizationRegistry(finalizeObserver));
+    registry.register(view, { store: new WeakRef(this), observer }, observer);
     (this._observers || (this._observers = new Set())).add(observer);
+    return observer;
   }
 
   // ### `_removeObserver` unregisters a mutation observer.
   _removeObserver(observer) {
-    this._observers.delete(observer);
-    if (this._observers.size === 0)
-      this._observers = null;
+    observerRegistry.unregister(observer);
+    if (this._observers) {
+      this._observers.delete(observer);
+      if (this._observers.size === 0)
+        this._observers = null;
+    }
   }
 
   // ### `_notifyObservers` notifies observers of a mutation.
   _notifyObservers(subjectId, predicateId, objectId, graphId, added) {
     // Observers can remove themselves during Set iteration
-    for (const observer of this._observers)
-      observer(subjectId, predicateId, objectId, graphId, added);
+    for (const observer of this._observers) {
+      const view = observer.deref();
+      if (view)
+        view._onParentMutation(subjectId, predicateId, objectId, graphId, added);
+      else
+        // Finalization may be delayed; also prune collected views during notification.
+        this._removeObserver(observer);
+    }
   }
 
   // ### `_uniqueEntities` returns a function that accepts an entity ID
@@ -1251,6 +1273,8 @@ function indexMatch(index, ids, depth = 0) {
 function validateMatchSemantics(semantics = 'lazy') {
   if (semantics !== 'lazy' && semantics !== 'snapshot' && semantics !== 'forwarded')
     throw new Error(`Unknown matchSemantics: ${semantics}`);
+  if (semantics !== 'lazy' && (typeof WeakRef !== 'function' || typeof FinalizationRegistry !== 'function'))
+    throw new Error('Non-lazy matchSemantics requires WeakRef and FinalizationRegistry support');
   return semantics;
 }
 
@@ -1291,8 +1315,7 @@ class DatasetCoreAndReadableStream extends Readable {
       // Cache pattern ids on first use
       this._subjectId = this._predicateId = this._objectId = this._graphId = undefined;
       if (!this._matchesNothing) {
-        this._observer = this._onParentMutation.bind(this);
-        n3Store._addObserver(this._observer);
+        this._observer = n3Store._addObserver(this);
       }
     }
   }

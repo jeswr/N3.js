@@ -519,12 +519,19 @@ iterations are released when their last reader finishes.
 
 Such views observe the parent store: a `'snapshot'` view until it materializes,
 is frozen by a matching mutation, or is detached; a `'forwarded'` view until it
-is detached. The store holds a strong reference to each observing view —
-retaining it against garbage collection — and checks every mutation against
-each open view's pattern. Internal cleanup uses `view._detach()` to freeze a
-view to its current contents and release its observer. This is an internal
-method, not part of the public API. Detaching one view does not detach sub-views
-that were already created from it.
+is detached. Observers hold views weakly, so discarding a view allows it to be
+garbage-collected without explicit cleanup, including views created by internal
+library calls. Finalization removes the dead registration, and mutations also
+prune collected views if finalization has not run yet. Cleanup timing depends on
+the JavaScript runtime; live views and active readers retain their semantics.
+Internal cleanup can use `view._detach()` to freeze a view to its current contents
+and release its observer immediately. This is an internal method, not part of the
+public API. Detaching one view does not detach sub-views already created from it.
+
+The `'snapshot'` and `'forwarded'` modes require native `WeakRef` and
+`FinalizationRegistry` support (Node.js 14.6 or later, or a browser with these
+APIs). Selecting either mode on an unsupported runtime throws; the default
+`'lazy'` mode does not require these APIs.
 
 ## Reasoning
 
