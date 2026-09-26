@@ -35,9 +35,9 @@ protected with copy-on-write. A copied index can share subject/predicate prefixe
 within its tree, whereas the flat array repeats four IDs per quad. The array
 provides direct resumption at `4 * yielded` for each reader; an index snapshot
 would need a cursor or a traversal that skips the consumed prefix without
-constructing terms. This comparison benchmarks the array against the previous
-quad-array implementation, not against a copied index. It does not establish
-which of those two ID-only representations is faster or smaller.
+constructing terms. The measurements below compare the array with the previous
+quad-array implementation. A [separate follow-up comparison](N3StoreSnapshotRepresentations.md)
+now benchmarks the two ID-only representations across data shapes and sizes.
 
 ## Measurements
 
