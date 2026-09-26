@@ -7,7 +7,7 @@ const root = resolve(__dirname, '..');
 const fixture = resolve(__dirname, 'fixtures/store-memory.js');
 
 describe.each(['snapshot', 'forwarded'])('Store %s view memory', matchSemantics => {
-  it.each(['transient', 'nested', 'parent', 'reasoner', 'iterator', 'stream'])(
+  it.each(['transient', 'nested', 'parent', 'reasoner', 'iterator', 'stream', 'abandoned'])(
     'reclaims discarded objects and registrations in the %s scenario',
     async scenario => {
       // Test real collection outside Jest's module registry and without requiring

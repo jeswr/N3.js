@@ -1270,6 +1270,75 @@ function indexMatch(index, ids, depth = 0) {
   return target;
 }
 
+// Capture a read in the same index order as readQuads, without constructing RDF terms.
+// A flat list avoids allocating a Quad (and its terms) for every unread result.
+function snapshotMatch(store, subject, predicate, object, graph) {
+  const snapshot = { store, ids: [] };
+  const subjectId = subject && store._termToNumericId(subject);
+  const predicateId = predicate && store._termToNumericId(predicate);
+  const objectId = object && store._termToNumericId(object);
+  // Only active reads are frozen: bound terms and graphs have already resolved,
+  // and notifications run before deletion. Entity IDs are never removed.
+
+  // Keep this choice aligned with readQuads: changing order would repeat or skip
+  // results when an iterator resumes partway through its snapshot.
+  let indexName, key0, key1, key2, positions;
+  if (objectId && (subjectId || !predicateId)) {
+    indexName = 'objects';
+    [key0, key1, key2] = [objectId, subjectId, predicateId];
+    positions = [2, 0, 1];
+  }
+  else if (!subjectId && predicateId) {
+    indexName = 'predicates';
+    [key0, key1, key2] = [predicateId, objectId, subjectId];
+    positions = [1, 2, 0];
+  }
+  else {
+    indexName = 'subjects';
+    [key0, key1, key2] = [subjectId, predicateId, objectId];
+    positions = [0, 1, 2];
+  }
+
+  const graphs = store._getGraphs(graph), parts = [];
+  for (const graphId in graphs) {
+    const index = graphs[graphId][indexName];
+    const graphKey = Number(graphId);
+    for (const value0 in (key0 ? { [key0]: index[key0] } : index)) {
+      const index1 = index[value0];
+      if (!index1) continue; // eslint-disable-line no-continue
+      parts[positions[0]] = Number(value0);
+      for (const value1 in (key1 ? { [key1]: index1[key1] } : index1)) {
+        const index2 = index1[value1];
+        if (!index2) continue; // eslint-disable-line no-continue
+        parts[positions[1]] = Number(value1);
+        for (const value2 in (key2 ? (key2 in index2 ? { [key2]: null } : {}) : index2)) {
+          parts[positions[2]] = Number(value2);
+          snapshot.ids.push(parts[0], parts[1], parts[2], graphKey);
+        }
+      }
+    }
+  }
+  return snapshot;
+}
+
+// Skip already-yielded IDs in constant time; only materialize the requested tail.
+function* iterateSnapshot({ store, ids }, offset) {
+  const entities = store._entities;
+  let subject, predicate, object, graph;
+  let subjectId, predicateId, objectId, graphId;
+  for (let i = offset * 4; i < ids.length; i += 4) {
+    if (subjectId !== ids[i])
+      subject = store._termFromId(entities[subjectId = ids[i]]);
+    if (predicateId !== ids[i + 1])
+      predicate = store._termFromId(entities[predicateId = ids[i + 1]]);
+    if (objectId !== ids[i + 2])
+      object = store._termFromId(entities[objectId = ids[i + 2]]);
+    if (graphId !== ids[i + 3])
+      graph = store._termFromId(entities[graphId = ids[i + 3]]);
+    yield store._factory.quad(subject, predicate, object, graph);
+  }
+}
+
 function validateMatchSemantics(semantics = 'lazy') {
   if (semantics !== 'lazy' && semantics !== 'snapshot' && semantics !== 'forwarded')
     throw new Error(`Unknown matchSemantics: ${semantics}`);
@@ -1308,10 +1377,8 @@ class DatasetCoreAndReadableStream extends Readable {
     }
 
     if (semantics !== 'lazy') {
-      // Track stable reads across parent mutations
-      this._generation = 0;
-      this._activeIterators = this._currentIterators = 0;
-      this._baselines = null;
+      // Active reads share a snapshot only when their source changes.
+      this._readers = null;
       // Cache pattern ids on first use
       this._subjectId = this._predicateId = this._objectId = this._graphId = undefined;
       if (!this._matchesNothing) {
@@ -1356,17 +1423,15 @@ class DatasetCoreAndReadableStream extends Readable {
       this.n3Store.readQuads(this.subject, this.predicate, this.object, this.graph);
   }
 
-  // ### `_freezeCurrentIterators` snapshots readers in the current generation.
+  // ### `_freezeCurrentIterators` freezes only readers still using the live source.
   _freezeCurrentIterators() {
-    if (this._currentIterators === 0)
-      return;
-    if (!this._baselines)
-      this._baselines = new Map();
-    this._baselines.set(this._generation++, {
-      readers: this._currentIterators,
-      quads: [...this._sourceIterator()],
-    });
-    this._currentIterators = 0;
+    if (this._readers) {
+      this._readers.snapshot = this._filtered ? snapshotMatch(this._filtered) :
+        snapshotMatch(this.n3Store, this.subject, this.predicate, this.object, this.graph);
+      // Each iterator retains its own group. New reads must see the new source;
+      // the view must not retain snapshots belonging to suspended or abandoned reads.
+      this._readers = null;
+    }
   }
 
   // ### `_onParentMutation` applies a parent mutation to this view.
@@ -1479,11 +1544,8 @@ class DatasetCoreAndReadableStream extends Readable {
     this._filtered = this.filtered;
     this._detachObserver();
     // Lazy views deferred this state
-    if (this._semantics === 'lazy') {
-      this._generation = 0;
-      this._activeIterators = this._currentIterators = 0;
-      this._baselines = null;
-    }
+    if (this._semantics === 'lazy')
+      this._readers = null;
     this._semantics = 'snapshot';
     return this;
   }
@@ -1594,6 +1656,8 @@ class DatasetCoreAndReadableStream extends Readable {
   }
 
   toArray() {
+    if (this._semantics !== 'lazy')
+      return [...this];
     return this._filtered ? this._filtered.toArray() : this.n3Store.getQuads(this.subject, this.predicate, this.object, this.graph);
   }
 
@@ -1660,35 +1724,29 @@ class DatasetCoreAndReadableStream extends Readable {
   }
 
   *_iterateStable() {
-    // Use a snapshot if the parent changes mid-iteration
-    const generation = this._generation;
+    const readers = this._readers || (this._readers = { count: 0, snapshot: null });
+    const source = this._sourceIterator();
     let yielded = 0;
-    this._activeIterators++;
-    this._currentIterators++;
+    readers.count++;
     try {
-      for (const quad of this._sourceIterator()) {
-        if (this._generation !== generation)
+      while (!readers.snapshot) {
+        const { value, done } = source.next();
+        // A custom factory can mutate the store inside next(), even on its first call.
+        if (readers.snapshot || done)
           break;
         yielded++;
-        yield quad;
+        yield value;
       }
-      if (this._generation !== generation) {
-        const baseline = this._baselines.get(generation).quads;
-        for (let i = yielded; i < baseline.length; i++)
-          yield baseline[i];
-      }
+      if (readers.snapshot)
+        yield* iterateSnapshot(readers.snapshot, yielded);
     }
     finally {
-      if (this._generation === generation)
-        this._currentIterators--;
-      else {
-        const baseline = this._baselines.get(generation);
-        // A slow reader must not retain snapshots of later, completed generations.
-        if (--baseline.readers === 0)
-          this._baselines.delete(generation);
+      source.return();
+      if (--readers.count === 0) {
+        readers.snapshot = null;
+        if (this._readers === readers)
+          this._readers = null;
       }
-      if (--this._activeIterators === 0)
-        this._baselines = null;
     }
   }
 }

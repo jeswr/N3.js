@@ -53,8 +53,9 @@ function transientViews(store, operation) {
       }
       else
         view.read(1);
+      const readers = view._readers;
       store.add(extra);
-      refs.push(new WeakRef(view._baselines));
+      refs.push(new WeakRef(readers), new WeakRef(readers.snapshot));
       store.delete(extra);
     }
   }
@@ -88,6 +89,15 @@ function activeReader(store) {
   const first = scenario === 'stream' ? reader.read(1) : reader.next().value;
   assert.deepStrictEqual(first, original);
   return { reader, refs: [new WeakRef(view), new WeakRef(view._observer)] };
+}
+
+function abandonedReader(store) {
+  const view = store.match();
+  const reader = view[Symbol.iterator]();
+  reader.next();
+  const readers = view._readers;
+  store.add(extra);
+  return { view, refs: [new WeakRef(reader), new WeakRef(readers.snapshot)] };
 }
 
 function readRules(store) {
@@ -149,6 +159,15 @@ async function run() {
     const refs = readRules(store);
     await collectUntil(() => collected(refs) && store._observers === null);
     assert.strictEqual(store.size, quads.length);
+    return refs.length;
+  }
+  if (scenario === 'abandoned') {
+    const store = makeStore(manyQuads);
+    const { view, refs } = abandonedReader(store);
+    // Keeping the view alive must not retain a discarded iterator's snapshot.
+    await collectUntil(() => collected(refs));
+    assert.strictEqual(view.has(extra), matchSemantics === 'forwarded');
+    assert.strictEqual(view.has(original), true);
     return refs.length;
   }
   assert.ok(scenario === 'iterator' || scenario === 'stream');

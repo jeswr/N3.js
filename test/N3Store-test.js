@@ -991,6 +991,107 @@ describe('Store', () => {
         },
       );
 
+      it.each(['snapshot', 'forwarded'])(
+        'should keep %s toArray stable across a reentrant factory mutation', matchSemantics => {
+          const original = [q('s1', 'p1', 'o1'), q('s2', 'p1', 'o2')];
+          const state = { mutate: false, store: null };
+          const factory = {
+            ...DataFactory,
+            defaultGraph() {
+              if (state.mutate) {
+                state.mutate = false;
+                state.store.delete(original[1]);
+              }
+              return DataFactory.defaultGraph();
+            },
+          };
+          const store = state.store = new Store(original, { factory });
+          const view = store.match(null, null, null, null, { matchSemantics });
+          state.mutate = true;
+          expect(view.toArray()).toEqual(original);
+          expect(store.size).toBe(1);
+        },
+      );
+
+      describe.each(['snapshot', 'forwarded'])('%s numeric snapshots', matchSemantics => {
+        it('should preserve nested quad terms without reconstructing them during mutation', () => {
+          const quoted = q('a', 'b', 'c', 'quotedGraph');
+          const nested = new Quad(quoted, namedNode('p'), quoted);
+          const factory = { ...DataFactory, quad: jest.fn(DataFactory.quad) };
+          const store = new Store([
+            new Quad(quoted, namedNode('p'), nested),
+            new Quad(nested, namedNode('p'), quoted, namedNode('g')),
+          ], { factory });
+          const view = store.match(null, null, null, null, { matchSemantics });
+          const expected = [...view];
+          const iterator = view[Symbol.iterator]();
+          const first = iterator.next().value;
+          factory.quad.mockClear();
+          store.delete(expected[1]);
+          expect(factory.quad).not.toHaveBeenCalled();
+          expect([first, ...iterator]).toEqual(expected);
+        });
+
+        it('should release reader state when a custom factory throws', () => {
+          const factory = { ...DataFactory, quad: jest.fn(DataFactory.quad) };
+          const store = new Store([q('s', 'p', 'o')], { factory });
+          const view = store.match(null, null, null, null, { matchSemantics });
+          factory.quad.mockImplementationOnce(() => { throw new Error('factory failure'); });
+          expect(() => [...view]).toThrow('factory failure');
+          expect(view._readers).toBe(null);
+          expect([...view]).toEqual([q('s', 'p', 'o')]);
+        });
+
+        it.each(Array.from({ length: 8 }, (_, i) => i))(
+          'should skip missing index branches across sparse graphs (pattern %i)', mask => {
+            const store = new Store([
+              q('s0', 'p0', 'o1', 'g1'), q('s1', 'p0', 'o1', 'g2'), q('s1', 'p1', 'o0', 'g3'),
+              q('s1', 'p1', 'o1', 'g4'), q('s1', 'p1', 'o1', 'g5'),
+            ]);
+            const pattern = [namedNode('s1'), namedNode('p1'), namedNode('o1')]
+              .map((term, i) => mask & (1 << i) ? term : null);
+            const view = store.match(...pattern, null, { matchSemantics });
+            const expected = [...view];
+            const iterator = view[Symbol.iterator]();
+            const first = iterator.next().value;
+            store.delete(expected[expected.length - 1]);
+            expect([first, ...iterator]).toEqual(expected);
+          },
+        );
+
+        it.each(Array.from({ length: 32 }, (_, i) => [i % 16, i >= 16]))(
+          'should preserve order without constructing quads on mutation (pattern %i, materialized %s)',
+          (mask, materialized) => {
+            const factory = { ...DataFactory };
+            for (const method of ['namedNode', 'defaultGraph', 'quad'])
+              factory[method] = jest.fn(DataFactory[method]);
+            const store = new Store({ factory });
+            // Vary insertion order so POS/OSP reads differ from materialized SPO reads.
+            for (const o of ['o2', 'o1'])
+              for (const p of ['p2', 'p1'])
+                for (const s of ['s2', 's1'])
+                  for (const g of ['', 'g1'])
+                    store.add(q(s, p, o, g));
+            const terms = [namedNode('s1'), namedNode('p1'), namedNode('o1'), new DefaultGraph()];
+            const pattern = terms.map((term, i) => mask & (1 << i) ? term : null);
+            const view = store.match(...pattern, { matchSemantics });
+            if (materialized)
+              view.size;
+            const expected = [...view];
+            const iterator = view[Symbol.iterator]();
+            const first = iterator.next().value;
+            for (const method of ['namedNode', 'defaultGraph', 'quad'])
+              factory[method].mockClear();
+
+            store.delete(expected[expected.length - 1]);
+            for (const method of ['namedNode', 'defaultGraph', 'quad'])
+              expect(factory[method]).not.toHaveBeenCalled();
+            expect([first, ...iterator]).toEqual(expected);
+            expect(factory.quad).toHaveBeenCalledTimes(expected.length - 1);
+          },
+        );
+      });
+
       it('should snapshot an absent pattern term before its first matching mutation', () => {
         const store = buildStore();
         const view = store.match(namedNode('sNONE'), null, null, null, { matchSemantics: 'snapshot' });
@@ -1008,7 +1109,7 @@ describe('Store', () => {
           const first = iterator.next().value;
           expect(store.addQuad(first)).toBe(false);
           expect(view._filtered).toBeUndefined();
-          expect(view._baselines).toBe(null);
+          expect(view._readers.snapshot).toBe(null);
           expect(values([first, ...iterator])).toEqual(initialValues);
           expect(store.size).toBe(6);
         },
@@ -1030,8 +1131,7 @@ describe('Store', () => {
             }
           });
           expect(values(await arrayifyStream(stream))).toEqual(values(quads));
-          expect(view._activeIterators).toBe(0);
-          expect(view._baselines).toBe(null);
+          expect(view._readers).toBe(null);
           expect(view.has(quads[39])).toBe(matchSemantics === 'snapshot');
           view._detach();
         },
@@ -1606,8 +1706,7 @@ describe('Store', () => {
           expect(values([firstQuad, ...remaining])).toEqual(initialValues);
           expect(values(current)).toEqual([...initialValues, 'oNEW']);
           expect(values(await arrayifyStream(view))).toEqual([...initialValues, 'oNEW']);
-          expect(view._activeIterators).toBe(0);
-          expect(view._baselines).toBe(null);
+          expect(view._readers).toBe(null);
         });
 
         it.each([undefined, new Error('cancel stream')])(
@@ -1615,16 +1714,18 @@ describe('Store', () => {
           async error => {
             const stream = view.toStream();
             expect(stream.read()).not.toBeNull();
+            const readers = view._readers;
             store.add(q('s1', 'p1', 'oNEW'));
-            expect(view._activeIterators).toBe(1);
+            expect(readers.count).toBe(1);
             const onError = jest.fn();
             stream.on('error', onError);
             await new Promise(resolve => {
               stream.once('close', resolve);
               stream.destroy(error);
             });
-            expect(view._activeIterators).toBe(0);
-            expect(view._baselines).toBe(null);
+            expect(readers.count).toBe(0);
+            expect(readers.snapshot).toBe(null);
+            expect(view._readers).toBe(null);
             expect(view.destroyed).toBe(false);
             expect(values(view)).toEqual([...initialValues, 'oNEW']);
             expect(onError.mock.calls).toEqual(error ? [[error]] : []);
@@ -1768,9 +1869,11 @@ describe('Store', () => {
             store.addQuad(q('s1', 'p1', `o${i}`));
           view = store.match(namedNode('s1'), null, null, null, opts);
           expect(view.read()).not.toBeNull();
-          expect(view._activeIterators).toBe(1);
+          const readers = view._readers;
+          expect(readers.count).toBe(1);
           view.once('close', () => {
-            expect(view._activeIterators).toBe(0);
+            expect(readers.count).toBe(0);
+            expect(view._readers).toBe(null);
             store.addQuad(q('s1', 'p1', 'oNEW'));
             const seen = valuesWithMutationAfterFirstQuad(view,
               () => store.addQuad(q('s1', 'p1', 'oNEW2')));
@@ -1808,26 +1911,30 @@ describe('Store', () => {
           const peer = view[Symbol.iterator]();
           const first = outer.next().value;
           expect(peer.next().value).toEqual(first);
+          const readers = view._readers;
+          expect(readers.count).toBe(2);
           const extra = q('s1', 'p1', 'oTEMP');
           store.add(extra);
           peer.return();
-          expect(view._baselines.size).toBe(1);
+          expect(readers.count).toBe(1);
           store.delete(extra);
 
           for (let i = 0; i < 20; i++) {
             const inner = view[Symbol.iterator]();
             const firstInner = inner.next().value;
+            const innerReaders = view._readers;
             store.add(extra);
-            expect(view._baselines.size).toBe(2);
+            expect(innerReaders.snapshot).not.toBe(readers.snapshot);
             expect(values([firstInner, ...inner])).toEqual(initialValues);
-            expect(view._baselines.size).toBe(1);
+            expect(innerReaders.snapshot).toBe(null);
+            expect(readers.snapshot).not.toBe(null);
             store.delete(extra);
           }
 
-          expect(view._activeIterators).toBe(1);
+          expect(readers.count).toBe(1);
           expect(values([first, ...outer])).toEqual(initialValues);
-          expect(view._activeIterators).toBe(0);
-          expect(view._baselines).toBe(null);
+          expect(readers.snapshot).toBe(null);
+          expect(view._readers).toBe(null);
         });
 
         it('should keep an overlapping iteration stable after a baseline freeze', () => {
