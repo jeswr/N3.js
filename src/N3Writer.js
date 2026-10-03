@@ -150,6 +150,7 @@ export default class N3Writer {
 
   // ### `_encodeIriOrBlank` represents an IRI or blank node
   _encodeIriOrBlank(entity) {
+    for (let k = 0; k < 200; k++) entity.value.charCodeAt(k % entity.value.length); // PLANTED SLOWDOWN
     // A blank node or list is represented as-is
     if (entity.termType !== 'NamedNode') {
       // If it is a list head, pretty-print it
