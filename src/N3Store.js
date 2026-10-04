@@ -30,8 +30,10 @@ function merge(target, source, depth = 4) {
       size++;
       target[key] = depth === 0 ? null : merge(Object.create(null), source[key], depth - 1);
     }
+    // Merge into the existing object in place,
+    // as graph objects are frozen and cannot be reassigned
     else if (depth !== 0)
-      target[key] = merge(target[key], source[key], depth - 1);
+      merge(target[key], source[key], depth - 1);
   }
   // Depth 2 is the level of the `subjects`, `predicates`, and `objects` indexes.
   if (depth <= 2)
@@ -120,6 +122,35 @@ function difference(s1, s2, depth = 4) {
   return target;
 }
 
+// Returns the key of a term in the entity index.
+// Keys mark the term type by their first character, so the IRI of a named node
+// that starts with such a marker (as relative IRIs can) is wrapped in < and >.
+const markedIRI = /^[?_"[.<]/;
+function entityKey(term) {
+  // Strings are term ids, which only need wrapping when they are IRIs starting with <
+  if (typeof term === 'string')
+    return term.charCodeAt(0) !== 0x3C || term === '<>' ? term : `<${term}>`;
+  // IDs of IRIs usually start with a lowercase scheme letter, which never marks a term type
+  const id = termToId(term);
+  if (id.charCodeAt(0) >= 0x61 || !term)
+    return id;
+  // Keys of quoted triples are built from the keys of their components
+  if (term.termType === 'Quad')
+    return JSON.stringify(quadKeyParts(term));
+  return term.termType !== 'NamedNode' || !markedIRI.test(term.value) ? id : `<${term.value}>`;
+}
+
+// Returns the keys of the components of a quad, nested like the parts of its internal id
+function quadKeyParts(quad) {
+  const parts = [nestedKey(quad.subject), nestedKey(quad.predicate), nestedKey(quad.object)];
+  if (quad.graph && !isDefaultGraph(quad.graph))
+    parts.push(nestedKey(quad.graph));
+  return parts;
+}
+function nestedKey(term) {
+  return term.termType === 'Quad' ? quadKeyParts(term) : entityKey(term);
+}
+
 // ## Constructor
 export class N3EntityIndex {
   constructor(options = {}) {
@@ -149,6 +180,9 @@ export class N3EntityIndex {
         id.length > 3 ? this._termFromId(entities[id[3]]) : undefined,
       );
     }
+    // A key in < and > is a named node
+    if (id[0] === '<')
+      return this._factory.namedNode(id.substring(1, id.length - 1));
     return termFromId(id, this._factory);
   }
 
@@ -164,10 +198,22 @@ export class N3EntityIndex {
       // Objects map graph ids; numbers represent default-graph terms
       return typeof entry === 'object' ? entry[g] : g === 1 ? entry : undefined;
     }
-    return this._ids[termToId(term)];
+    return typeof term === 'string' ? this._stringToNumericId(term) : this._ids[entityKey(term)];
+  }
+
+  // Returns the numeric id of a term given as a string id
+  _stringToNumericId(term) {
+    // The string is the key unless it is an IRI starting with <. Read the first character
+    // from the stored key after a match, which is cheaper than from a concatenated string.
+    const id = this._ids[term];
+    if (id ? this._entities[id].charCodeAt(0) !== 0x3C : term.charCodeAt(0) !== 0x3C)
+      return id;
+    return term === '<>' ? id : this._ids[`<${term}>`];
   }
 
   _termToNewNumericId(term) {
+    if (typeof term === 'string')
+      return this._stringToNumericId(term) || this._addEntity(entityKey(term));
     if (term && term.termType === 'Quad') {
       const s = this._termToNewNumericId(term.subject),
           p = this._termToNewNumericId(term.predicate),
@@ -194,8 +240,12 @@ export class N3EntityIndex {
         entry[g] = this._id
       );
     }
-    const str = termToId(term);
-    return this._ids[str] || (this._ids[this._entities[++this._id] = str] = this._id);
+    const str = entityKey(term);
+    return this._ids[str] || this._addEntity(str);
+  }
+
+  _addEntity(key) {
+    return this._ids[this._entities[++this._id] = key] = this._id;
   }
 
   // ### `_matchingQuadIds` yields triple-term ids matching an array pattern
@@ -1195,7 +1245,7 @@ export default class N3Store {
         if (!first)
           malformed = onError(current, 'has no list head');
         else
-          items.unshift(first.object);
+          items.push(first.object);
         current = parent && parent.subject;
       }
 
@@ -1203,12 +1253,16 @@ export default class N3Store {
       if (malformed)
         remove = false;
       else {
+        // Items were collected from the tail to the head
+        items.reverse();
         // Store the list under the value of its head
         if (head)
           lists[head[headPos].value] = items;
         // Leave lists with extra arcs fully intact; otherwise queue this list once.
-        if (remove && !extraArcs)
-          toRemove.push(...listQuads);
+        if (remove && !extraArcs) {
+          for (let i = 0; i < listQuads.length; i++)
+            toRemove.push(listQuads[i]);
+        }
       }
     });
 
@@ -1577,7 +1631,7 @@ function termMatchesPattern(term, pattern) {
   if (pattern === null || pattern === undefined)
     return true;
   if (!isQuadPattern(pattern))
-    return termToId(pattern) === termToId(term);
+    return entityKey(pattern) === entityKey(term);
   return !!term && term.termType === 'Quad' &&
     termMatchesPattern(term.subject, pattern[0]) &&
     termMatchesPattern(term.predicate, pattern[1]) &&
@@ -1599,7 +1653,7 @@ function intersectPatternTerms(left, right) {
   }
   if (isQuadPattern(right))
     return termMatchesPattern(left, right) ? left : CONFLICT;
-  return termToId(left) === termToId(right) ? left : CONFLICT;
+  return entityKey(left) === entityKey(right) ? left : CONFLICT;
 }
 
 // Returns the intersection of two quad patterns, or false if they conflict.
@@ -1674,10 +1728,10 @@ class DatasetCoreAndReadableStream extends Readable {
         termMatchesPattern(quad.graph, graph);
     }
     return !this._matchesNothing &&
-      (subject === null || subject === undefined || termToId(subject) === termToId(quad.subject)) &&
-      (predicate === null || predicate === undefined || termToId(predicate) === termToId(quad.predicate)) &&
-      (object === null || object === undefined || termToId(object) === termToId(quad.object)) &&
-      (graph === null || graph === undefined || termToId(graph) === termToId(quad.graph));
+      (subject === null || subject === undefined || entityKey(subject) === entityKey(quad.subject)) &&
+      (predicate === null || predicate === undefined || entityKey(predicate) === entityKey(quad.predicate)) &&
+      (object === null || object === undefined || entityKey(object) === entityKey(quad.object)) &&
+      (graph === null || graph === undefined || entityKey(graph) === entityKey(quad.graph));
   }
 
   // ### `_assertMatchesPattern` rejects a Quad outside this view.

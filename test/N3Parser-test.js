@@ -1,4 +1,4 @@
-import { Parser, Writer, NamedNode, BlankNode, Quad, termFromId, DataFactory as DF } from '../src';
+import { Parser, Writer, Store, NamedNode, BlankNode, Quad, termFromId, DataFactory as DF } from '../src';
 import rdfDataModel from '@rdfjs/data-model';
 import { isomorphic } from 'rdf-isomorphic';
 
@@ -2685,6 +2685,12 @@ describe('Parser', () => {
     );
 
     it(
+      'should parse a datatype separated from its marker by whitespace',
+      shouldParse(parser, '_:a <http://ex.org/b> "c"  ^^  <http://ex.org/t> .',
+                          ['_:b0_a', 'http://ex.org/b', '"c"^^http://ex.org/t']),
+    );
+
+    it(
       'should parse a single triple starting with Bom',
       shouldParse(parser, '\ufeff_:a <http://ex.org/b> "c".',
           ['_:b0_a', 'http://ex.org/b', '"c"']),
@@ -2873,6 +2879,7 @@ describe('Parser', () => {
     }
     function parserIsImpliedBy() { return new Parser({ baseIRI: BASE_IRI, format: 'N3', isImpliedBy: true }); }
     function parserFormulaScoped() { return new Parser({ baseIRI: BASE_IRI, format: 'N3', formulaScopedBlankNodes: true }); }
+    function parserEmptyFormulaAsBlankNode() { return new Parser({ baseIRI: BASE_IRI, format: 'N3', emptyFormulaAsTrue: false }); }
 
     it(
       'should bind the empty prefix to the document local namespace by default',
@@ -2949,6 +2956,14 @@ describe('Parser', () => {
                   ['s1', 'p', '_:b0'],
                   ['http://outer.example/s', 'http://outer.example/p', 'http://outer.example/o', '_:b1'],
                   ['s2', 'p', '_:b1']),
+    );
+
+    it(
+      'should not keep a prefix first declared inside a formula',
+      shouldNotParse(parser,
+                     '<s> <p> { @prefix in: <http://inner.example/>. in:s in:p in:o. }.\n' +
+                     'in:s in:p in:o.',
+                     'Undefined prefix "in:" on line 2.'),
     );
 
     it(
@@ -3316,34 +3331,34 @@ describe('Parser', () => {
     );
 
     it(
-      'should parse an empty formula in the subject position as a blank node graph term',
-      shouldParse(parser, '{} <b> <c>.',
+      'should parse an empty formula in the subject position as a blank node graph term when emptyFormulaAsTrue is false',
+      shouldParse(parserEmptyFormulaAsBlankNode, '{} <b> <c>.',
                   ['_:b0', 'b', 'c']),
     );
 
     it(
-      'should parse an empty formula in the object position as a blank node graph term',
-      shouldParse(parser, '<a> <b> {}.',
+      'should parse an empty formula in the object position as a blank node graph term when emptyFormulaAsTrue is false',
+      shouldParse(parserEmptyFormulaAsBlankNode, '<a> <b> {}.',
                   ['a', 'b', '_:b0']),
     );
 
     it(
-      'should parse an empty formula mid-document without leaking the previous subject into it',
-      shouldParse(parser, '<p> <q> <r>. {} <b> <c>.',
+      'should parse an empty formula mid-document without leaking the previous subject into it when emptyFormulaAsTrue is false',
+      shouldParse(parserEmptyFormulaAsBlankNode, '<p> <q> <r>. {} <b> <c>.',
                   ['p', 'q', 'r'],
                   ['_:b0', 'b', 'c']),
     );
 
     it(
-      'should parse empty formulas in the subject and object positions as distinct blank node graph terms',
-      shouldParse(parser, '{} <b> {}.',
+      'should parse empty formulas in the subject and object positions as distinct blank node graph terms when emptyFormulaAsTrue is false',
+      shouldParse(parserEmptyFormulaAsBlankNode, '{} <b> {}.',
                   ['_:b0', 'b', '_:b1']),
     );
 
     it(
       // Regression test for https://github.com/rdfjs/N3.js/issues/356
-      'should parse an empty formula after a list subject without emitting a garbage quad',
-      shouldParse(parser, '() <http://www.w3.org/2000/10/swap/log#onNegativeSurface> { }.',
+      'should parse an empty formula after a list subject without emitting a garbage quad when emptyFormulaAsTrue is false',
+      shouldParse(parserEmptyFormulaAsBlankNode, '() <http://www.w3.org/2000/10/swap/log#onNegativeSurface> { }.',
                   ['http://www.w3.org/1999/02/22-rdf-syntax-ns#nil', 'http://www.w3.org/2000/10/swap/log#onNegativeSurface', '_:b0']),
     );
 
@@ -4618,11 +4633,10 @@ describe('Parser', () => {
   });
 
   // The N3 spec tests read an empty formula as the boolean literal true
-  // (a direction discussed in https://github.com/w3c-cg/N3/issues/185, not yet a settled decision),
-  // so this behavior is opt-in until the next major version (https://github.com/rdfjs/N3.js/issues/632)
-  describe('A Parser instance for the N3 format with the emptyFormulaAsTrue option', () => {
-    function parser() { return new Parser({ baseIRI: BASE_IRI, format: 'N3', emptyFormulaAsTrue: true }); }
-    function parserIsImpliedBy() { return new Parser({ baseIRI: BASE_IRI, format: 'N3', emptyFormulaAsTrue: true, isImpliedBy: true }); }
+  // (see https://github.com/w3c-cg/N3/issues/185 and https://github.com/rdfjs/N3.js/issues/632)
+  describe('A Parser instance for the N3 format reading empty formulas', () => {
+    function parser() { return new Parser({ baseIRI: BASE_IRI, format: 'N3' }); }
+    function parserIsImpliedBy() { return new Parser({ baseIRI: BASE_IRI, format: 'N3', isImpliedBy: true }); }
 
     it(
       'should parse an empty formula in the subject position as the boolean literal true',
@@ -4971,6 +4985,96 @@ describe('Parser', () => {
           DF.literal('Thomas'),
         ),
       ])).toBe(true);
+    });
+  });
+
+  describe('A Parser instance with nested triple terms', () => {
+    function nestedObject(depth) {
+      return `<http://e/s> <http://e/p> ${'<<( <http://e/a> <http://e/b> '.repeat(depth)}<http://e/o>${' )>>'.repeat(depth)} .`;
+    }
+    function nestedSubject(depth) {
+      return `${'<<( '.repeat(depth)}<http://e/s> <http://e/p> <http://e/o>${' )>> <http://e/p> <http://e/o>'.repeat(depth)} .`;
+    }
+    function nestedListItem(depth) {
+      return `<http://e/s> <http://e/p> (${' <<( <http://e/a> <http://e/b>'.repeat(depth)} <http://e/o>${' )>>'.repeat(depth)} ) .`;
+    }
+    function nestedReifiedTriple(depth) {
+      return `<http://e/s> <http://e/p> ${'<< <http://e/a> <http://e/b> '.repeat(depth)}<http://e/o>${' >>'.repeat(depth)} .`;
+    }
+
+    it('parses triple terms nested up to 1024 levels by default', () => {
+      const [quad] = new Parser().parse(nestedObject(1024));
+      let depth = 0;
+      for (let term = quad.object; term.termType === 'Quad'; term = term.object)
+        depth++;
+      expect(depth).toBe(1024);
+    });
+
+    it('parses triple terms that the Store and Writer can process at the default limit', () => {
+      const quads = new Parser().parse(nestedObject(1024));
+      const store = new Store(quads);
+      expect(store.getQuads()).toHaveLength(1);
+      expect(new Parser().parse(new Writer().quadsToString(store.getQuads()))).toHaveLength(1);
+    });
+
+    it('rejects triple terms nested deeper than 1024 levels by default', () => {
+      expect(() => new Parser().parse(nestedObject(1025)))
+        .toThrow('Triple terms nested deeper than 1024 levels on line 1.');
+    });
+
+    it('rejects triple terms nested deeper than maxTripleTermDepth', () => {
+      const parser = new Parser({ maxTripleTermDepth: 3 });
+      expect(parser.parse(nestedObject(3))).toHaveLength(1);
+      expect(() => parser.parse(nestedObject(4)))
+        .toThrow('Triple terms nested deeper than 3 levels on line 1.');
+    });
+
+    it('limits triple terms in subject position', () => {
+      const parser = new Parser({ format: 'text/n3', maxTripleTermDepth: 3 });
+      expect(parser.parse(nestedSubject(3))).toHaveLength(1);
+      expect(() => parser.parse(nestedSubject(4)))
+        .toThrow('Triple terms nested deeper than 3 levels on line 1.');
+    });
+
+    it('limits triple terms in lists', () => {
+      const parser = new Parser({ maxTripleTermDepth: 3 });
+      expect(parser.parse(nestedListItem(3))).toHaveLength(3);
+      expect(() => parser.parse(nestedListItem(4)))
+        .toThrow('Triple terms nested deeper than 3 levels on line 1.');
+      expect(() => new Parser({ maxTripleTermDepth: 0 }).parse(nestedListItem(1)))
+        .toThrow('Triple terms nested deeper than 0 levels on line 1.');
+    });
+
+    it('limits reified triples', () => {
+      const parser = new Parser({ maxTripleTermDepth: 3 });
+      expect(() => parser.parse(nestedReifiedTriple(3))).not.toThrow();
+      expect(() => parser.parse(nestedReifiedTriple(4)))
+        .toThrow('Triple terms nested deeper than 3 levels on line 1.');
+    });
+
+    it('counts the depth of the current triple term only', () => {
+      const parser = new Parser({ maxTripleTermDepth: 2 });
+      expect(parser.parse(`${nestedObject(2)}\n${nestedObject(2)}`)).toHaveLength(2);
+    });
+
+    it('does not limit nesting with maxTripleTermDepth: Infinity', () => {
+      expect(new Parser({ maxTripleTermDepth: Infinity }).parse(nestedObject(2000))).toHaveLength(1);
+    });
+
+    it('falls back to the default limit for an invalid maxTripleTermDepth', () => {
+      for (const maxTripleTermDepth of [NaN, -1, 1.5, '3', null])
+        expect(() => new Parser({ maxTripleTermDepth }).parse(nestedObject(1025)))
+          .toThrow('Triple terms nested deeper than 1024 levels on line 1.');
+    });
+
+    it('reports the error once and stops parsing when parsing asynchronously', async () => {
+      const calls = [];
+      await new Promise(resolve => {
+        new Parser({ maxTripleTermDepth: 1 }).parse(`${nestedObject(2)}\n<http://e/s> <http://e/p> <http://e/o> .`,
+          (error, quad) => { calls.push([error, quad]); setTimeout(resolve, 10); });
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0][0].message).toBe('Triple terms nested deeper than 1 level on line 1.');
     });
   });
 
@@ -5433,6 +5537,71 @@ describe('Parser', () => {
       // base path with slashes in query string
       itShouldResolve('http://abc/def/ghi?q=xx/yyy/z', 'jjj', 'http://abc/def/jjj');
       itShouldResolve('http://abc/def/ghi?q=xx/y?y/z', 'jjj', 'http://abc/def/jjj');
+    });
+
+    describe('RFC3986 examples with empty path in base IRI', () => {
+      itShouldResolve('http://abc', 'g:h',    'g:h');
+      itShouldResolve('http://abc', 'g',      'http://abc/g');
+      itShouldResolve('http://abc', './g',    'http://abc/g');
+      itShouldResolve('http://abc', 'g/',     'http://abc/g/');
+      itShouldResolve('http://abc', 'g/h',    'http://abc/g/h');
+      itShouldResolve('http://abc', '/g',     'http://abc/g');
+      itShouldResolve('http://abc', '//g',    'http://g');
+      itShouldResolve('http://abc', '?y',     'http://abc?y');
+      itShouldResolve('http://abc', 'g?y',    'http://abc/g?y');
+      itShouldResolve('http://abc', '#s',     'http://abc#s');
+      itShouldResolve('http://abc', 'g#s',    'http://abc/g#s');
+      itShouldResolve('http://abc', 'g?y#s',  'http://abc/g?y#s');
+      itShouldResolve('http://abc', '',       'http://abc');
+      itShouldResolve('http://abc', '.',      'http://abc/');
+      itShouldResolve('http://abc', './',     'http://abc/');
+      itShouldResolve('http://abc', '..',     'http://abc/');
+      itShouldResolve('http://abc', '../',    'http://abc/');
+      itShouldResolve('http://abc', '../g',   'http://abc/g');
+      itShouldResolve('http://abc', '../../g', 'http://abc/g');
+    });
+
+    describe('RFC3986 examples with empty path and query in base IRI', () => {
+      itShouldResolve('http://abc?q', 'g',    'http://abc/g');
+      itShouldResolve('http://abc?q', '?y',   'http://abc?y');
+      itShouldResolve('http://abc?q', '#s',   'http://abc?q#s');
+      itShouldResolve('http://abc?q', '',     'http://abc?q');
+      itShouldResolve('http://abc?q', '../g', 'http://abc/g');
+    });
+
+    describe('RFC3986 examples with empty host and path in base IRI', () => {
+      itShouldResolve('file://', 'g',    'file:///g');
+      itShouldResolve('file://', './g',  'file:///g');
+      itShouldResolve('file://', '../g', 'file:///g');
+      itShouldResolve('file://', '?y',   'file://?y');
+      itShouldResolve('file://', '#s',   'file://#s');
+      itShouldResolve('file://?q', 'g',  'file:///g');
+    });
+
+    describe('RFC3986 examples with empty path and fragment in base IRI', () => {
+      itShouldResolve('http://abc#top', 'g',  'http://abc/g');
+      itShouldResolve('http://abc#top', '#s', 'http://abc#s');
+    });
+
+    describe('scheme-relative references with dot segments', () => {
+      itShouldResolve('http://a/b/c/d;p?q', '//host',         'http://host');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/',        'http://host/');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/../g',    'http://host/g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/../../g', 'http://host/g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/..',      'http://host/');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/../..',   'http://host/');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/./g',     'http://host/g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/g/../h',  'http://host/h');
+      itShouldResolve('http://abc/def/ghi', '//host/../..',   'http://host/');
+      itShouldResolve('http://a/b/c/d;p?q', '//host?x/../g',  'http://host?x/../g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host#x/../g',  'http://host#x/../g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host?x/./g',   'http://host?x/./g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/a/..?x/../g', 'http://host/?x/../g');
+      itShouldResolve('//base/a/b',         '//host/../g',    '//host/g');
+      itShouldResolve('//base/a/b',         '//host',         '//host');
+      itShouldResolve('//base/a/b',         '//host?x/../g',  '//host?x/../g');
+      itShouldResolve('//base/a/b',         '/../g',          '//base/g');
+      itShouldResolve('./a/b',              '//host/./g/../h', '//host/h');
     });
   });
 });
