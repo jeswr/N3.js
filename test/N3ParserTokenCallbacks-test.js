@@ -141,3 +141,41 @@ describe('Parser token callbacks', () => {
     expect(errors).toEqual([error]);
   });
 });
+
+describe('Mapping quads to source positions with token callbacks', () => {
+  // Mirrors the recipe in the README
+  function positionsOf(document) {
+    const punctuation = new Set(['.', ',', ';', '[', ']', '(', ')', '{', '}', '<<', '>>', '<<(', ')>>', 'eof']);
+    const literalSuffixes = new Set(['type', 'typeIRI', 'langcode']);
+    const positions = [];
+    let lastTerm = null;
+    return new Promise((resolve, reject) => new Parser().parse(document, {
+      onTokenEnd: token => {
+        if (literalSuffixes.has(token.type)) lastTerm = { ...lastTerm, end: token.end };
+        else if (!punctuation.has(token.type)) lastTerm = token;
+      },
+      onQuad: (error, quad) => {
+        if (error) reject(error);
+        else if (quad) positions.push([quad.object.value, lastTerm.line, lastTerm.start, lastTerm.end]);
+        else resolve(positions);
+      },
+    }));
+  }
+
+  it('points each quad in plain statements to its object', async () => {
+    const document = [
+      '@prefix ex: <http://ex.org/> .',
+      'ex:s ex:p ex:o1 ,',
+      '    ex:o2 ;',
+      '  a "1"^^ex:int ;',
+      '  ex:q "lit"@en, <http://ex.org/o3> .',
+    ].join('\n');
+    expect(await positionsOf(document)).toEqual([
+      ['http://ex.org/o1', 2, 10, 15],
+      ['http://ex.org/o2', 3, 4, 9],
+      ['1', 4, 4, 15],
+      ['lit', 5, 7, 15],
+      ['http://ex.org/o3', 5, 17, 35],
+    ]);
+  });
+});

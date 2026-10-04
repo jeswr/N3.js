@@ -154,6 +154,30 @@ const quads = parser.parse('<a> <b> "hello"@en.', {
 });
 ```
 
+Tokens carry their `line` and their `start` and `end` columns, so these callbacks can map quads back to the source,
+for instance to point at the triple that failed SHACL validation.
+A quad is emitted while the parser processes the token after its object,
+so the last term read before it is, in plain statements, the object:
+
+```JavaScript
+const punctuation = new Set(['.', ',', ';', '[', ']', '(', ')', '{', '}', '<<', '>>', '<<(', ')>>', 'eof']);
+const literalSuffixes = new Set(['type', 'typeIRI', 'langcode']);
+const positions = new Map();
+let lastTerm = null;
+parser.parse(turtle, {
+  onTokenEnd: token => {
+    // A datatype or language tag extends the literal before it
+    if (literalSuffixes.has(token.type)) lastTerm = { ...lastTerm, end: token.end };
+    else if (!punctuation.has(token.type)) lastTerm = token;
+  },
+  onQuad: (error, quad) => {
+    if (quad) positions.set(quad, { line: lastTerm.line, start: lastTerm.start, end: lastTerm.end });
+  },
+});
+```
+
+In nested blank nodes, lists, and triple terms, this points to the nearest preceding term instead.
+
 If no callbacks are provided, parsing happens synchronously returning an array of quads:
 
 ```JavaScript
