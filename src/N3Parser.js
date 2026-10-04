@@ -47,11 +47,20 @@ export default class N3Parser {
       this._resolveRelativeIRI = iri => { return null; };
     this._blankNodePrefix = typeof options.blankNodePrefix !== 'string' ? '' :
                               options.blankNodePrefix.replace(/^(?!_:)/, '_:');
-    this._lexer = options.lexer || new N3Lexer({ lineMode: isLineMode, n3: isN3, isImpliedBy: this._isImpliedBy });
+    // Map the token types of additional directives (@name and NAME) to their names
+    this._directives = null;
+    if (options.directives) {
+      this._directives = Object.create(null);
+      for (const name of options.directives)
+        this._directives[`@${name.toLowerCase()}`] = this._directives[name.toUpperCase()] = name;
+    }
+    this._lexer = options.lexer || new N3Lexer({
+      lineMode: isLineMode, n3: isN3, isImpliedBy: this._isImpliedBy, directives: options.directives,
+    });
     // Disable explicit quantifiers by default
     this._explicitQuantifiers = !!options.explicitQuantifiers;
-    // Disable formula-only blank node scoping by default
-    this._formulaScopedBlankNodes = !!options.formulaScopedBlankNodes;
+    // Scope blank node labels to formulas only, unless explicitly disabled
+    this._formulaScopedBlankNodes = options.formulaScopedBlankNodes !== false;
     // Disable parsing of unsupported versions by default
     this._parseUnsupportedVersions = !!options.parseUnsupportedVersions;
     this._version = options.version;
@@ -87,9 +96,14 @@ export default class N3Parser {
       const path = queryPos < 0 ? baseIRI : baseIRI.substr(0, queryPos);
       this._basePath   = baseIRI.indexOf('/') < 0 ? baseIRI :
                          path.substr(0, path.lastIndexOf('/') + 1);
-      baseIRI = baseIRI.match(/^(?:([a-z][a-z0-9+.-]*:))?(?:\/\/[^\/]*)?/i);
+      const base = baseIRI;
+      baseIRI = baseIRI.match(/^(?:([a-z][a-z0-9+.-]*:))?(\/\/[^\/?#]*)?/i);
       this._baseRoot   = baseIRI[0];
       this._baseScheme = baseIRI[1];
+      // If the base has an authority but an empty path,
+      // relative IRIs merge under the path '/' (RFC 3986 §5.2.3)
+      if (baseIRI[2] !== undefined && (base.length === this._baseRoot.length || base[this._baseRoot.length] === '?'))
+        this._basePath = `${this._baseRoot}/`;
     }
   }
 
@@ -224,8 +238,13 @@ export default class N3Parser {
     case 'GRAPH':
       if (this._supportsNamedGraphs)
         return this._readNamedGraphLabel;
-    // Otherwise, the next token must be a subject
+    // Otherwise, the next token must be a subject, unless it is an additional directive
     default:
+      if (this._directives !== null && token.type in this._directives && this._graph === null) {
+        this._sparqlStyle = token.type[0] !== '@';
+        this._directiveCallback(this._directives[token.type]);
+        return this._readDeclarationPunctuation;
+      }
       return this._readSubject(token);
     }
   }
@@ -1547,8 +1566,13 @@ export default class N3Parser {
     }
     // Resolve root-relative IRIs at the root of the base IRI
     case '/':
-      // Resolve scheme-relative IRIs to the scheme
-      return (iri[1] === '/' ? this._baseScheme : this._baseRoot) + this._removeDotSegments(iri);
+      // Resolve scheme-relative IRIs to the scheme,
+      // keeping the reference's authority intact (RFC 3986 §5.2.4)
+      if (iri[1] !== '/')
+        return this._baseRoot + this._removeDotSegments(iri);
+      // Without a base scheme, a leading ':' marks where the authority starts
+      return this._baseScheme ? this._removeDotSegments(this._baseScheme + iri) :
+        this._removeDotSegments(`:${iri}`).substr(1);
     // Resolve all other IRIs at the base IRI's path
     default:
       // Relative IRIs cannot contain a colon in the first path segment
@@ -1573,8 +1597,8 @@ export default class N3Parser {
         if (pathStart < 0) {
           // Skip two slashes before the authority
           if (iri[++i] === '/' && iri[++i] === '/')
-            // Skip to slash after the authority
-            while ((pathStart = i + 1) < length && iri[pathStart] !== '/')
+            // Skip to the end of the authority
+            while ((pathStart = i + 1) < length && iri[pathStart] !== '/' && iri[pathStart] !== '?' && iri[pathStart] !== '#')
               i = pathStart;
         }
         break;
@@ -1625,13 +1649,14 @@ export default class N3Parser {
   parse(input, quadCallback, prefixCallback, versionCallback) {
     // The second parameter also accepts an object of named callbacks.
     // As a second and third parameter it still accepts a separate quadCallback and prefixCallback for backward compatibility as well
-    let onQuad, onPrefix, onComment, onVersion, onToken, onTokenEnd;
+    let onQuad, onPrefix, onComment, onVersion, onDirective, onToken, onTokenEnd;
     if (quadCallback && (quadCallback.onQuad || quadCallback.onPrefix || quadCallback.onComment || quadCallback.onVersion ||
-                         quadCallback.onToken || quadCallback.onTokenEnd)) {
+                         quadCallback.onDirective || quadCallback.onToken || quadCallback.onTokenEnd)) {
       onQuad = quadCallback.onQuad;
       onPrefix = quadCallback.onPrefix;
       onComment = quadCallback.onComment;
       onVersion = quadCallback.onVersion;
+      onDirective = quadCallback.onDirective;
       onToken = quadCallback.onToken;
       onTokenEnd = quadCallback.onTokenEnd;
     }
@@ -1652,6 +1677,7 @@ export default class N3Parser {
       this._prefixes[''] = this._resolveIRI('#');
     this._prefixCallback = onPrefix || noop;
     this._versionCallback = onVersion || noop;
+    this._directiveCallback = onDirective || noop;
     this._inversePredicate = false;
     this._expectOf = false;
     this._quantified = Object.create(null);

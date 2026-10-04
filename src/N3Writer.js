@@ -8,6 +8,7 @@ import { escapeRegex } from './Util';
 const DEFAULTGRAPH = N3DataFactory.defaultGraph();
 
 const { rdf, xsd } = namespaces;
+const { hasOwnProperty } = Object.prototype;
 
 // Characters that require escaping, as in canonical N-Triples:
 // U+0000–U+001F, `"`, `\`, U+007F, U+FFFE, and U+FFFF.
@@ -65,7 +66,7 @@ export default class N3Writer {
       this._prefixPatterns = Object.create(null);
       if (options.baseIRI) {
         this._baseIri = new BaseIRI(options.baseIRI);
-        if (options.writeBase)
+        if (options.writeBase !== false)
           this._write(`@base <${options.baseIRI}>.\n`);
       }
       options.prefixes && this.addPrefixes(options.prefixes);
@@ -165,7 +166,7 @@ export default class N3Writer {
     // A blank node or list is represented as-is
     if (entity.termType !== 'NamedNode') {
       // If it is a list head, pretty-print it
-      if (this._lists && (entity.value in this._lists))
+      if (this._lists && hasOwnProperty.call(this._lists, entity.value))
         entity = this.list(this._lists[entity.value]);
       // Terms from this library already hold their serialization as id
       if (entity instanceof Term)
@@ -181,9 +182,8 @@ export default class N3Writer {
     if (escape.test(iri))
       iri = iri.replace(escapeAll, characterReplacer);
     // Try to represent the IRI as prefixed name, unless no prefixes were added
-    const prefixMatch = this._hasPrefixes ? this._prefixRegex.exec(iri) : null;
-    return !prefixMatch ? `<${iri}>` :
-           (!prefixMatch[1] ? iri : this._prefixIRIs[prefixMatch[1]] + prefixMatch[2]);
+    const prefixMatch = this._hasPrefixes ? (this._prefixRegex || this._createPrefixRegex()).exec(iri) : null;
+    return !prefixMatch ? `<${iri}>` : this._prefixIRIs[prefixMatch[1]] + prefixMatch[2];
   }
 
   // ### `_encodeLiteral` represents a literal
@@ -320,23 +320,25 @@ export default class N3Writer {
       }
       // Store and write the prefix
       this._prefixIRIs[iri] = (prefix += ':');
-      this._prefixPatterns[iri] = [escapeRegex(iri), escapeRegex(prefix)];
+      this._prefixPatterns[iri] = escapeRegex(iri);
       this._write(`@prefix ${prefix} <${iri}>.\n`);
     }
-    // Recreate the prefix matcher
+    // Recreate the prefix matcher when it is next needed, so that adding
+    // prefixes one by one does not rebuild it for every prefix
     if (hasPrefixes) {
       this._hasPrefixes = true;
-      let IRIlist = '', prefixList = '';
-      for (const prefixIRI in this._prefixPatterns) {
-        const [IRIpattern, prefixPattern] = this._prefixPatterns[prefixIRI];
-        IRIlist += IRIlist ? `|${IRIpattern}` : IRIpattern;
-        prefixList += prefixList ? `|${prefixPattern}` : prefixPattern;
-      }
-      this._prefixRegex = new RegExp(`^(?:${prefixList})[^/]*$|` +
-                                     `^(${IRIlist})([_a-zA-Z0-9](?:\\.?[\\-_a-zA-Z0-9])*)$`);
+      this._prefixRegex = null;
     }
     // End a prefix block with a newline
     this._write(hasPrefixes ? '\n' : '', done);
+  }
+
+  // ### `_createPrefixRegex` creates the matcher for the current prefixes
+  _createPrefixRegex() {
+    let IRIlist = '';
+    for (const prefixIRI in this._prefixPatterns)
+      IRIlist += IRIlist ? `|${this._prefixPatterns[prefixIRI]}` : this._prefixPatterns[prefixIRI];
+    return this._prefixRegex = new RegExp(`^(${IRIlist})([_a-zA-Z0-9](?:\\.?[\\-_a-zA-Z0-9])*)$`);
   }
 
   // ### `blank` creates a blank node with the given content

@@ -987,6 +987,21 @@ describe('Parser', () => {
     );
 
     it(
+        'should handle @prefix and @base after a SPARQL-style version declaration',
+        shouldParse('VERSION "1.2"\n' +
+            '@prefix ex: <ex:>.\n' +
+            'VERSION "1.2" @base <ex:>.\n' +
+            'ex:a ex:b <c> .',
+            ['ex:a', 'ex:b', 'ex:c']),
+    );
+
+    it(
+        'should still read a language tag after whitespace',
+        shouldParse('<ex:a> <ex:b> "c" @en .',
+            ['ex:a', 'ex:b', '"c"@en']),
+    );
+
+    it(
         'should not allow VERSION with an IRI',
         shouldNotParse('VERSION <ex:abc>',
             'Expected literal to follow version declaration on line 1.'),
@@ -2879,6 +2894,7 @@ describe('Parser', () => {
     }
     function parserIsImpliedBy() { return new Parser({ baseIRI: BASE_IRI, format: 'N3', isImpliedBy: true }); }
     function parserFormulaScoped() { return new Parser({ baseIRI: BASE_IRI, format: 'N3', formulaScopedBlankNodes: true }); }
+    function parserRescoped() { return new Parser({ baseIRI: BASE_IRI, format: 'N3', formulaScopedBlankNodes: false }); }
     function parserEmptyFormulaAsBlankNode() { return new Parser({ baseIRI: BASE_IRI, format: 'N3', emptyFormulaAsTrue: false }); }
 
     it(
@@ -3373,21 +3389,21 @@ describe('Parser', () => {
                   ['_:b3.a', '_:b3.b', '_:b3.c', '_:b3']),
     );
 
-    // The tests below pin the default behaviour of rescoping blank node
-    // labels in lists and blank node property lists (#332, #660);
-    // the default flips to `formulaScopedBlankNodes` in a next major version (#630)
+    // The tests below pin the legacy behaviour of rescoping blank node
+    // labels in lists and blank node property lists (#332, #660),
+    // which `formulaScopedBlankNodes: false` restores (#630)
 
     it(
-      'should rescope a blank node in a list by default',
-      shouldParse(parser, '<s> <p> (_:a).',
+      'should rescope a blank node in a list when formulaScopedBlankNodes is false',
+      shouldParse(parserRescoped, '<s> <p> (_:a).',
                   ['s', 'p', '_:b0'],
                   ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first', '_:.a'],
                   ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil']),
     );
 
     it(
-      'should not reuse identifiers of blank nodes within and outside of lists by default',
-      shouldParse(parser, '<s> <p> (_:a). _:a <b> <c>.',
+      'should not reuse identifiers of blank nodes within and outside of lists when formulaScopedBlankNodes is false',
+      shouldParse(parserRescoped, '<s> <p> (_:a). _:a <b> <c>.',
                   ['s', 'p', '_:b0'],
                   ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first', '_:.a'],
                   ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil'],
@@ -3395,8 +3411,8 @@ describe('Parser', () => {
     );
 
     it(
-      'should not reuse identifiers of blank nodes within and outside of blank node property lists by default',
-      shouldParse(parser, '_:a <p> [ <q> _:a ].',
+      'should not reuse identifiers of blank nodes within and outside of blank node property lists when formulaScopedBlankNodes is false',
+      shouldParse(parserRescoped, '_:a <p> [ <q> _:a ].',
                   ['_:b0_a', 'p', '_:b0'],
                   ['_:b0', 'q', '_:.a']),
     );
@@ -4415,11 +4431,11 @@ describe('Parser', () => {
     );
 
     // _:m!:p denotes _:b1 such that [_:m ex:p _:b1]; the list (_:m!:p) is _:b0
-    // (as in all lists, the blank node label is scoped to the list context)
+    // (the blank node label is scoped to the enclosing formula, here the document)
     it(
       'should parse a ! path starting with a blank node inside a list',
       shouldParse(parser, '@prefix : <ex:>. (_:m!:p) :q :r.',
-                  ['_:.m', 'ex:p', '_:b1'],
+                  ['_:b0_m', 'ex:p', '_:b1'],
                   ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first', '_:b1'],
                   ['_:b0', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil'],
                   ['_:b0', 'ex:q', 'ex:r']),
@@ -5537,6 +5553,71 @@ describe('Parser', () => {
       // base path with slashes in query string
       itShouldResolve('http://abc/def/ghi?q=xx/yyy/z', 'jjj', 'http://abc/def/jjj');
       itShouldResolve('http://abc/def/ghi?q=xx/y?y/z', 'jjj', 'http://abc/def/jjj');
+    });
+
+    describe('RFC3986 examples with empty path in base IRI', () => {
+      itShouldResolve('http://abc', 'g:h',    'g:h');
+      itShouldResolve('http://abc', 'g',      'http://abc/g');
+      itShouldResolve('http://abc', './g',    'http://abc/g');
+      itShouldResolve('http://abc', 'g/',     'http://abc/g/');
+      itShouldResolve('http://abc', 'g/h',    'http://abc/g/h');
+      itShouldResolve('http://abc', '/g',     'http://abc/g');
+      itShouldResolve('http://abc', '//g',    'http://g');
+      itShouldResolve('http://abc', '?y',     'http://abc?y');
+      itShouldResolve('http://abc', 'g?y',    'http://abc/g?y');
+      itShouldResolve('http://abc', '#s',     'http://abc#s');
+      itShouldResolve('http://abc', 'g#s',    'http://abc/g#s');
+      itShouldResolve('http://abc', 'g?y#s',  'http://abc/g?y#s');
+      itShouldResolve('http://abc', '',       'http://abc');
+      itShouldResolve('http://abc', '.',      'http://abc/');
+      itShouldResolve('http://abc', './',     'http://abc/');
+      itShouldResolve('http://abc', '..',     'http://abc/');
+      itShouldResolve('http://abc', '../',    'http://abc/');
+      itShouldResolve('http://abc', '../g',   'http://abc/g');
+      itShouldResolve('http://abc', '../../g', 'http://abc/g');
+    });
+
+    describe('RFC3986 examples with empty path and query in base IRI', () => {
+      itShouldResolve('http://abc?q', 'g',    'http://abc/g');
+      itShouldResolve('http://abc?q', '?y',   'http://abc?y');
+      itShouldResolve('http://abc?q', '#s',   'http://abc?q#s');
+      itShouldResolve('http://abc?q', '',     'http://abc?q');
+      itShouldResolve('http://abc?q', '../g', 'http://abc/g');
+    });
+
+    describe('RFC3986 examples with empty host and path in base IRI', () => {
+      itShouldResolve('file://', 'g',    'file:///g');
+      itShouldResolve('file://', './g',  'file:///g');
+      itShouldResolve('file://', '../g', 'file:///g');
+      itShouldResolve('file://', '?y',   'file://?y');
+      itShouldResolve('file://', '#s',   'file://#s');
+      itShouldResolve('file://?q', 'g',  'file:///g');
+    });
+
+    describe('RFC3986 examples with empty path and fragment in base IRI', () => {
+      itShouldResolve('http://abc#top', 'g',  'http://abc/g');
+      itShouldResolve('http://abc#top', '#s', 'http://abc#s');
+    });
+
+    describe('scheme-relative references with dot segments', () => {
+      itShouldResolve('http://a/b/c/d;p?q', '//host',         'http://host');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/',        'http://host/');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/../g',    'http://host/g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/../../g', 'http://host/g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/..',      'http://host/');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/../..',   'http://host/');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/./g',     'http://host/g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/g/../h',  'http://host/h');
+      itShouldResolve('http://abc/def/ghi', '//host/../..',   'http://host/');
+      itShouldResolve('http://a/b/c/d;p?q', '//host?x/../g',  'http://host?x/../g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host#x/../g',  'http://host#x/../g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host?x/./g',   'http://host?x/./g');
+      itShouldResolve('http://a/b/c/d;p?q', '//host/a/..?x/../g', 'http://host/?x/../g');
+      itShouldResolve('//base/a/b',         '//host/../g',    '//host/g');
+      itShouldResolve('//base/a/b',         '//host',         '//host');
+      itShouldResolve('//base/a/b',         '//host?x/../g',  '//host?x/../g');
+      itShouldResolve('//base/a/b',         '/../g',          '//base/g');
+      itShouldResolve('./a/b',              '//host/./g/../h', '//host/h');
     });
   });
 });
