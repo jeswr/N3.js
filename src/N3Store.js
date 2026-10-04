@@ -44,7 +44,77 @@ function merge(target, source, depth = 4) {
 
 // Array-valued slots structurally match triple terms.
 const isQuadPattern = Array.isArray;
-const NO_CANDIDATES = Object.freeze({ subjectIds: [], objectIds: [], graphs: Object.freeze({}) });
+const NO_CANDIDATES = Object.freeze({ graphs: Object.freeze({}) });
+
+// Key filters restrict one index level: `undefined` allows any key,
+// a number allows one id, and a Set allows candidate ids.
+// `idFilter` turns a candidate Set into a filter, or null if it is empty.
+function idFilter(ids) {
+  return ids.size === 0 ? null : ids.size === 1 ? ids.values().next().value : ids;
+}
+
+// Returns the keys of `index` allowed by `filter`.
+// A Set filter drives the loop from the smaller side:
+// it probes its candidates when they are fewer than the index entries,
+// and otherwise tests each index key for membership.
+// Indexes without entry counters probe only if `probe` is set.
+function filterKeys(index, filter, probe) {
+  if (filter === undefined)
+    return Object.keys(index);
+  if (typeof filter !== 'object')
+    return filter in index ? [filter] : [];
+  const keys = [];
+  if (SIZE in index ? filter.size <= index[SIZE] : probe) {
+    for (const id of filter) {
+      if (id in index)
+        keys.push(id);
+    }
+  }
+  else {
+    for (const key in index) {
+      if (filter.has(Number(key)))
+        keys.push(key);
+    }
+  }
+  return keys;
+}
+
+// Yields the ids of the quads in a graph matching a structural plan,
+// reusing one `[subject, predicate, object]` array.
+function* matchIds(content, { name, filters, positions }) {
+  const [filter0, filter1, filter2] = filters, [position0, position1, position2] = positions;
+  const index0 = content[name], ids = [0, 0, 0];
+  for (const value0 of filterKeys(index0, filter0)) {
+    // Mutations can remove keys captured before an earlier yield.
+    const index1 = index0[value0];
+    if (!index1) continue; // eslint-disable-line no-continue
+    ids[position0] = Number(value0);
+    for (const value1 of filterKeys(index1, filter1)) {
+      const index2 = index1[value1];
+      if (!index2) continue; // eslint-disable-line no-continue
+      ids[position1] = Number(value1);
+      for (const value2 of filterKeys(index2, filter2)) {
+        ids[position2] = Number(value2);
+        yield ids;
+      }
+    }
+  }
+}
+
+// Chooses the index for structural candidates, driving from the smaller bound side.
+// Single ids choose the same index as `readQuads`.
+function structuralPlan({ predicateId, subjects, objects }) {
+  if (objects !== undefined && (subjects === undefined ? predicateId === undefined :
+      filterSize(subjects) >= filterSize(objects)))
+    return { name: 'objects', filters: [objects, subjects, predicateId], positions: [2, 0, 1] };
+  if (subjects === undefined && predicateId !== undefined)
+    return { name: 'predicates', filters: [predicateId, objects, subjects], positions: [1, 2, 0] };
+  return { name: 'subjects', filters: [subjects, predicateId, objects], positions: [0, 1, 2] };
+}
+
+function filterSize(filter) {
+  return typeof filter === 'object' ? filter.size : 1;
+}
 
 /**
  * Determines the intersection of the `_graphs` index s1 and s2.
@@ -248,40 +318,46 @@ export class N3EntityIndex {
     return this._ids[this._entities[++this._id] = key] = this._id;
   }
 
-  // ### `_matchingQuadIds` yields triple-term ids matching an array pattern
-  *_matchingQuadIds(pattern) {
-    const graph = pattern[3];
-    for (const l1 of this._matchingValues(this._quadIds, pattern[0])) {
-      for (const l2 of this._matchingValues(l1, pattern[1])) {
-        for (const entry of this._matchingValues(l2, pattern[2])) {
+  // ### `_matchingQuadIds` returns the Set of triple-term ids matching an array pattern
+  _matchingQuadIds(pattern) {
+    const ids = new Set();
+    // Resolve each component once, so nested patterns are not recomputed per entry
+    let subjects, predicates, objects, graphs;
+    if ((subjects = this._componentFilter(pattern[0])) === null ||
+        (predicates = this._componentFilter(pattern[1])) === null ||
+        (objects = this._componentFilter(pattern[2])) === null ||
+        (graphs = this._componentFilter(pattern[3])) === null)
+      return ids;
+    // Numbers represent default-graph terms
+    const matchesDefault = graphs === undefined || graphs === 1;
+    const quadIds = this._quadIds;
+    for (const key1 of filterKeys(quadIds, subjects, true)) {
+      const l1 = quadIds[key1];
+      for (const key2 of filterKeys(l1, predicates)) {
+        const l2 = l1[key2];
+        for (const key3 of filterKeys(l2, objects)) {
+          const entry = l2[key3];
           if (typeof entry !== 'object') {
-            if (graph === null || graph === undefined || isDefaultGraph(graph))
-              yield entry;
+            if (matchesDefault)
+              ids.add(entry);
           }
-          else
-            yield* this._matchingValues(entry, graph);
+          else {
+            for (const key4 of filterKeys(entry, graphs))
+              ids.add(entry[key4]);
+          }
         }
       }
     }
+    return ids;
   }
 
-  // ### `_matchingValues` yields index values matching a pattern component
-  *_matchingValues(index, component) {
-    if (component === null || component === undefined) {
-      for (const key in index)
-        yield index[key];
-    }
-    else if (isQuadPattern(component)) {
-      for (const id of this._matchingQuadIds(component)) {
-        if (id in index)
-          yield index[id];
-      }
-    }
-    else {
-      const id = this._termToNumericId(component);
-      if (id !== undefined && id in index)
-        yield index[id];
-    }
+  // ### `_componentFilter` resolves a pattern component to a key filter, or null if nothing matches
+  _componentFilter(component) {
+    if (component === null || component === undefined)
+      return undefined;
+    if (isQuadPattern(component))
+      return idFilter(this._matchingQuadIds(component));
+    return this._termToNumericId(component) || null;
   }
 
   // ### `_quadIdMatches` tests a triple-term id against an array pattern
@@ -542,26 +618,25 @@ export default class N3Store {
     return count;
   }
 
-  // ### `_candidateIds` resolves a pattern slot to matching ids
-  _candidateIds(term) {
-    if (isQuadPattern(term))
-      return [...this._entityIndex._matchingQuadIds(term)];
-    const id = this._termToNumericId(term);
-    return id === undefined ? [] : [id];
-  }
-
-  // ### `_structuralCandidates` resolves a pattern with array slots to candidate ids
+  // ### `_structuralCandidates` resolves a pattern with array slots to key filters
   _structuralCandidates(subject, predicate, object, graph) {
-    let predicateId;
+    let predicateId, subjects, objects;
     // Predicates cannot be triple terms
-    if (isQuadPattern(predicate) || predicate && !(predicateId = this._termToNumericId(predicate)))
+    if (isQuadPattern(predicate) || predicate && !(predicateId = this._termToNumericId(predicate)) ||
+        subject && !(subjects = this._slotFilter(subject)) ||
+        object && !(objects = this._slotFilter(object)))
       return NO_CANDIDATES;
     return {
       predicateId,
-      subjectIds: subject ? this._candidateIds(subject) : [undefined],
-      objectIds: object ? this._candidateIds(object) : [undefined],
+      subjects,
+      objects,
       graphs: isQuadPattern(graph) ? this._graphCandidates(graph) : this._getGraphs(graph),
     };
+  }
+
+  // ### `_slotFilter` resolves a bound pattern slot to a key filter, or a falsy value if nothing matches
+  _slotFilter(term) {
+    return isQuadPattern(term) ? idFilter(this._entityIndex._matchingQuadIds(term)) : this._termToNumericId(term);
   }
 
   // ### `_graphCandidates` returns graphs matching an array pattern
@@ -857,33 +932,17 @@ export default class N3Store {
 
   // ### `_readQuadsStructural` reads quads through array-pattern candidates
   *_readQuadsStructural(subject, predicate, object, graph) {
-    const { predicateId, subjectIds, objectIds, graphs } =
-      this._structuralCandidates(subject, predicate, object, graph);
-    let content;
+    const candidates = this._structuralCandidates(subject, predicate, object, graph);
+    const { graphs } = candidates, plan = structuralPlan(candidates), entities = this._entities;
 
     for (const graphId in graphs) {
-      if (content = graphs[graphId]) {
-        // Choose the best index for each candidate pair
-        for (const subjectId of subjectIds) {
-          for (const objectId of objectIds) {
-            if (subjectId) {
-              if (objectId)
-                yield* this._findInIndex(content.objects, objectId, subjectId, predicateId,
-                                  'object', 'subject', 'predicate', graphId);
-              else
-                yield* this._findInIndex(content.subjects, subjectId, predicateId, null,
-                                  'subject', 'predicate', 'object', graphId);
-            }
-            else if (predicateId)
-              yield* this._findInIndex(content.predicates, predicateId, objectId, null,
-                                'predicate', 'object', 'subject', graphId);
-            else if (objectId)
-              yield* this._findInIndex(content.objects, objectId, null, null,
-                                'object', 'subject', 'predicate', graphId);
-            else
-              yield* this._findInIndex(content.subjects, null, null, null,
-                                'subject', 'predicate', 'object', graphId);
-          }
+      const content = graphs[graphId];
+      // Candidate triple terms need not be graphs of this store
+      if (content) {
+        const graphTerm = this._termFromId(entities[graphId]);
+        for (const ids of matchIds(content, plan)) {
+          yield this._factory.quad(this._termFromId(entities[ids[0]]), this._termFromId(entities[ids[1]]),
+            this._termFromId(entities[ids[2]]), graphTerm);
         }
       }
     }
@@ -946,26 +1005,15 @@ export default class N3Store {
 
   // ### `_countQuadsStructural` counts quads through array-pattern candidates
   _countQuadsStructural(subject, predicate, object, graph) {
-    const { predicateId, subjectIds, objectIds, graphs } =
-      this._structuralCandidates(subject, predicate, object, graph);
-    let count = 0, content;
+    const candidates = this._structuralCandidates(subject, predicate, object, graph);
+    const { graphs } = candidates, plan = structuralPlan(candidates);
+    let count = 0;
 
     for (const graphId in graphs) {
-      if (content = graphs[graphId]) {
-        // Choose the best index for each candidate pair
-        for (const subjectId of subjectIds) {
-          for (const objectId of objectIds) {
-            if (subjectId) {
-              count += objectId ?
-                this._countInIndex(content.objects, objectId, subjectId, predicateId) :
-                this._countInIndex(content.subjects, subjectId, predicateId, objectId);
-            }
-            else if (predicateId)
-              count += this._countInIndex(content.predicates, predicateId, objectId, subjectId);
-            else
-              count += this._countInIndex(content.objects, objectId, subjectId, predicateId);
-          }
-        }
+      if (graphs[graphId]) {
+        // eslint-disable-next-line no-unused-vars
+        for (const ids of matchIds(graphs[graphId], plan))
+          count++;
       }
     }
     return count;
@@ -1535,17 +1583,16 @@ function indexMatch(index, ids, depth = 0) {
 // A flat list avoids allocating a Quad (and its terms) for every unread result.
 function snapshotMatch(store, subject, predicate, object, graph) {
   const snapshot = { store, ids: [] };
-  // Follow the candidate order of `_readQuadsStructural`
+  // Follow the order of `_readQuadsStructural`
   if (isQuadPattern(subject) || isQuadPattern(predicate) || isQuadPattern(object) || isQuadPattern(graph)) {
-    const { predicateId, subjectIds, objectIds, graphs } =
-      store._structuralCandidates(subject, predicate, object, graph);
+    const candidates = store._structuralCandidates(subject, predicate, object, graph);
+    const { graphs } = candidates, plan = structuralPlan(candidates);
     for (const graphId in graphs) {
       // Candidate triple terms need not be graphs of this store
       if (graphs[graphId]) {
-        for (const subjectId of subjectIds) {
-          for (const objectId of objectIds)
-            snapshotGraph(snapshot.ids, graphs[graphId], Number(graphId), subjectId, predicateId, objectId);
-        }
+        const graphKey = Number(graphId);
+        for (const ids of matchIds(graphs[graphId], plan))
+          snapshot.ids.push(ids[0], ids[1], ids[2], graphKey);
       }
     }
     return snapshot;
@@ -1791,30 +1838,16 @@ class DatasetCoreAndReadableStream extends Readable {
 
       let subjectId, predicateId, objectId;
 
-      // Merge the subindexes of each array-pattern candidate
+      // Copy the matching quads of array-pattern candidates in one pass
       if (this._structural) {
         const candidates = n3Store._structuralCandidates(subject, predicate, object, graph);
-        predicateId = candidates.predicateId;
-        const { subjectIds, objectIds, graphs: candidateGraphs } = candidates;
-        for (const graphKey in candidateGraphs) {
-          const content = candidateGraphs[graphKey];
-          if (content) {
-            let target = null;
-            for (subjectId of subjectIds) {
-              for (objectId of objectIds) {
-                const subjects = indexMatch(content.subjects, [subjectId, predicateId, objectId]);
-                if (subjects) {
-                  if (!target)
-                    target = newStore._graphs[graphKey] = { subjects: {}, predicates: {}, objects: {} };
-                  merge(target.subjects, subjects, 2);
-                  merge(target.predicates, indexMatch(content.predicates, [predicateId, objectId, subjectId]), 2);
-                  merge(target.objects, indexMatch(content.objects, [objectId, subjectId, predicateId]), 2);
-                }
-              }
-            }
+        const { graphs } = candidates, plan = structuralPlan(candidates);
+        for (const graphKey in graphs) {
+          if (graphs[graphKey]) {
+            for (const ids of matchIds(graphs[graphKey], plan))
+              newStore._addQuad(ids[0], ids[1], ids[2], graphKey);
           }
         }
-        newStore._size = null;
         return newStore;
       }
 

@@ -175,3 +175,56 @@ for (const starQuad of starStore) {
 }
 assert.equal(found, S0_HITS);
 console.timeEnd(TEST);
+
+// ## Regression checks for quadratic structural matching
+// Each scenario visits N candidates; a per-candidate rescan would make it O(N²).
+const pPred = namedNode(`${prefix}p`), qPred = namedNode(`${prefix}q`), rel = namedNode(`${prefix}rel`);
+const anyTerm = [null, null, null, null];
+
+TEST = `- View size for ?r reifies <<( ?s ?p ?o )>>, ${N} results`;
+console.time(TEST);
+assert.equal(starStore.match(null, reifies, anyTerm).size, N);
+console.timeEnd(TEST);
+
+TEST = `- View size for ?r ?p <<( ?s p3 ?o )>>, ${Math.ceil((N - 3) / 16)} results`;
+console.time(TEST);
+assert.equal(starStore.match(null, null, [null, namedNode(`${prefix}p3`), null, null]).size, Math.ceil((N - 3) / 16));
+console.timeEnd(TEST);
+
+const nestedStore = new N3.Store();
+for (i = 0; i < N; i++)
+  nestedStore.addQuad(namedNode(`${prefix}r${i}`), reifies,
+    quad(namedNode(`${prefix}s${i}`), pPred, quad(namedNode(`${prefix}a${i}`), qPred, namedNode(`${prefix}b${i}`))));
+
+TEST = `- Nested wildcard match <<( ?s p <<( ?a q ?b )>> )>> over ${N} outer subjects`;
+console.time(TEST);
+assert.equal(nestedStore.getQuads(null, reifies, [null, pPred, [null, qPred, null, null], null]).length, N);
+console.timeEnd(TEST);
+
+const pairStore = new N3.Store();
+for (i = 0; i < N; i++)
+  pairStore.addQuad(quad(namedNode(`${prefix}a${i}`), pPred, namedNode(`${prefix}b${i}`)), rel,
+    quad(namedNode(`${prefix}c${i}`), pPred, namedNode(`${prefix}d${i}`)));
+
+TEST = `- Array patterns in subject and object, ${N} pairs (count)`;
+console.time(TEST);
+assert.equal(pairStore.countQuads(anyTerm, null, anyTerm), N);
+console.timeEnd(TEST);
+
+TEST = `- Array patterns in subject and object, ${N} pairs (read)`;
+console.time(TEST);
+assert.equal(pairStore.getQuads(anyTerm, null, anyTerm).length, N);
+console.timeEnd(TEST);
+
+TEST = `- Array patterns in subject and object, ${N} pairs (snapshot capture)`;
+console.time(TEST);
+{
+  const iterator = pairStore.match(anyTerm, null, anyTerm)[Symbol.iterator]();
+  iterator.next();
+  pairStore.addQuad(quad(pPred, pPred, pPred), rel, quad(qPred, qPred, qPred));
+  let read = 1;
+  while (!iterator.next().done)
+    read++;
+  assert.equal(read, N);
+}
+console.timeEnd(TEST);

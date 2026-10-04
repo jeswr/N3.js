@@ -1066,6 +1066,103 @@ describe('Store', () => {
           expect(index._quadIdMatches(nestedId, pattern(wildcard, p, inner))).toBe(true);
         });
       });
+
+      describe('with many candidates on each side', () => {
+        function ex(name) {
+          return new NamedNode(`ex:${name}`);
+        }
+        const rel = ex('rel'), q = ex('q');
+        let bigStore;
+        beforeEach(() => {
+          bigStore = new Store();
+          for (let i = 0; i < 20; i++) {
+            // Triple terms on both sides, with 5 distinct subjects inside the objects
+            bigStore.addQuad(new Quad(ex(`a${i}`), p, ex(`b${i}`)), rel, new Quad(ex(`c${i % 5}`), q, ex(`d${i}`)));
+            // Nested triple terms below distinct outer subjects
+            bigStore.addQuad(ex(`r${i}`), reifies,
+              new Quad(ex(`s${i}`), p, new Quad(ex(`a${i}`), i % 2 ? q : p, ex(`b${i}`))));
+            bigStore.addQuad(ex(`r${i}`), p, ex(`plain${i}`));
+          }
+          // Triple terms that only occur as subjects outnumber the stored objects of `g`
+          bigStore.addQuad(ex('r0'), reifies, new Quad(ex('a0'), p, ex('b0')), g);
+        });
+
+        function termMatches(term, slot) {
+          if (slot === null || slot === undefined)
+            return true;
+          if (!Array.isArray(slot))
+            return term.equals(slot);
+          return term.termType === 'Quad' && termMatches(term.subject, slot[0]) &&
+            termMatches(term.predicate, slot[1]) && termMatches(term.object, slot[2]) &&
+            termMatches(term.graph, slot[3]);
+        }
+
+        function keys(quads) {
+          return quads.map(quad => termToId(quad)).sort();
+        }
+
+        // Checks every read path against a scan and returns the number of matches
+        function countMatches(subject, predicate, object, graph) {
+          const oracle = [...bigStore].filter(quad => termMatches(quad.subject, subject) &&
+            termMatches(quad.predicate, predicate) && termMatches(quad.object, object) &&
+            termMatches(quad.graph, graph));
+          const expected = oracle.length;
+          expect(keys(bigStore.getQuads(subject, predicate, object, graph))).toEqual(keys(oracle));
+          expect(bigStore.countQuads(subject, predicate, object, graph)).toBe(expected);
+          const view = bigStore.match(subject, predicate, object, graph);
+          expect(view.size).toBe(expected);
+          expect(keys([...view])).toEqual(keys(oracle));
+
+          // A mutation freezes a suspended iterator in the same order
+          const live = bigStore.match(subject, predicate, object, graph);
+          const iterator = live[Symbol.iterator](), first = iterator.next();
+          const seen = first.done ? [] : [first.value];
+          const extra = new Quad(new Quad(ex('a0'), p, ex('b0')), rel, new Quad(ex('c0'), q, ex('d0')), ex('h'));
+          const removed = oracle[0];
+          if (removed)
+            bigStore.removeQuad(removed);
+          else
+            bigStore.addQuad(extra);
+          for (let next = iterator.next(); !next.done; next = iterator.next())
+            seen.push(next.value);
+          expect(keys(seen)).toEqual(keys(oracle));
+          // Restore the store for the next pattern
+          if (removed)
+            bigStore.addQuad(removed);
+          else
+            bigStore.removeQuad(extra);
+          return expected;
+        }
+
+        it('walks the stored pairs when both sides are array patterns', () => {
+          expect(countMatches([null, null, null, null], null, [null, null, null, null], null)).toBe(20);
+          expect(countMatches([null, p, null, null], rel, [null, q, null, null], null)).toBe(20);
+        });
+
+        it('drives from the side with fewer candidates', () => {
+          // Fewer object candidates
+          expect(countMatches([null, p, null, null], null, [ex('c0'), null, null, null], null)).toBe(4);
+          // Fewer subject candidates, filtering many objects
+          expect(countMatches([null, null, ex('b3'), null], null, [null, q, null, null], null)).toBe(1);
+          expect(countMatches([ex('a7'), null, null, null], rel, [null, null, null, null], null)).toBe(1);
+          expect(countMatches([null, p, null, null], null, [ex('c2'), q, ex('d7'), null], null)).toBe(1);
+        });
+
+        it('matches nested patterns below many outer subjects', () => {
+          expect(countMatches(null, reifies, [null, p, [null, q, null, null], null], null)).toBe(10);
+          expect(countMatches(null, null, [null, p, [null, null, null, null], null], null)).toBe(20);
+          expect(countMatches(null, reifies, [null, null, [ex('a3'), null, null, null], null], null)).toBe(1);
+          expect(countMatches(null, reifies, [null, null, [ex('a3'), p, null, null], null], null)).toBe(0);
+        });
+
+        it('filters single-sided patterns by predicate', () => {
+          expect(countMatches(null, reifies, [null, null, null, null], null)).toBe(21);
+          expect(countMatches(null, reifies, [null, null, null, null], new DefaultGraph())).toBe(20);
+          expect(countMatches(null, rel, [ex('c1'), null, null, null], null)).toBe(4);
+          expect(countMatches(null, null, [null, null, null, null], g)).toBe(1);
+          expect(countMatches(null, p, [null, null, null, null], null)).toBe(0);
+        });
+      });
     });
   });
 
@@ -4319,6 +4416,30 @@ describe('Store', () => {
       const secondQuad = new Quad(new NamedNode('s1'), new NamedNode('p2'), new NamedNode('o2'));
       store = new Store([firstQuad, secondQuad]);
       const iterator = store.readQuads(new NamedNode('s1'));
+      const first = iterator.next().value;
+      store.removeQuad(first.predicate.value === 'p1' ? secondQuad : firstQuad);
+      expect([...iterator]).toHaveLength(0);
+    });
+
+    it('should skip a branch deleted during a structural iteration', () => {
+      function term(name) {
+        return new Quad(new NamedNode(`${name}s`), new NamedNode('p'), new NamedNode(`${name}o`));
+      }
+      const firstQuad = new Quad(term('a'), new NamedNode('p1'), new NamedNode('o1'));
+      const secondQuad = new Quad(term('b'), new NamedNode('p1'), new NamedNode('o2'));
+      store = new Store([firstQuad, secondQuad]);
+      const iterator = store.readQuads([null, null, null, null]);
+      const first = iterator.next().value;
+      store.removeQuad(first.subject.equals(firstQuad.subject) ? secondQuad : firstQuad);
+      expect([...iterator]).toHaveLength(0);
+    });
+
+    it('should skip a second-level branch deleted during a structural iteration', () => {
+      const subject = new Quad(new NamedNode('s'), new NamedNode('p'), new NamedNode('o'));
+      const firstQuad = new Quad(subject, new NamedNode('p1'), new NamedNode('o1'));
+      const secondQuad = new Quad(subject, new NamedNode('p2'), new NamedNode('o2'));
+      store = new Store([firstQuad, secondQuad]);
+      const iterator = store.readQuads([null, null, null, null]);
       const first = iterator.next().value;
       store.removeQuad(first.predicate.value === 'p1' ? secondQuad : firstQuad);
       expect([...iterator]).toHaveLength(0);
