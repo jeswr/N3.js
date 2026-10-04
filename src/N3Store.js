@@ -30,8 +30,10 @@ function merge(target, source, depth = 4) {
       size++;
       target[key] = depth === 0 ? null : merge(Object.create(null), source[key], depth - 1);
     }
+    // Merge into the existing object in place,
+    // as graph objects are frozen and cannot be reassigned
     else if (depth !== 0)
-      target[key] = merge(target[key], source[key], depth - 1);
+      merge(target[key], source[key], depth - 1);
   }
   // Depth 2 is the level of the `subjects`, `predicates`, and `objects` indexes.
   if (depth <= 2)
@@ -116,6 +118,21 @@ function difference(s1, s2, depth = 4) {
   return target;
 }
 
+// Returns the key of a term in the entity index.
+// Keys mark the term type by their first character, so the IRI of a named node
+// that starts with such a marker (as relative IRIs can) is wrapped in < and >.
+const markedIRI = /^[?_"[.<]/;
+function entityKey(term) {
+  // Strings are term ids, which only need wrapping when they are IRIs starting with <
+  if (typeof term === 'string')
+    return term.charCodeAt(0) !== 0x3C || term === '<>' ? term : `<${term}>`;
+  // IDs of IRIs usually start with a lowercase scheme letter, which never marks a term type
+  const id = termToId(term);
+  if (id.charCodeAt(0) >= 0x61 || !term)
+    return id;
+  return term.termType !== 'NamedNode' || !markedIRI.test(term.value) ? id : `<${term.value}>`;
+}
+
 // ## Constructor
 export class N3EntityIndex {
   constructor(options = {}) {
@@ -133,6 +150,10 @@ export class N3EntityIndex {
   }
 
   _termFromId(id) {
+    // A key in < and > is a named node
+    if (id[0] === '<')
+      return this._factory.namedNode(id.substring(1, id.length - 1));
+    // A key starting with . is a quoted triple
     if (id[0] === '.') {
       const entities = this._entities;
       const terms = id.split('.');
@@ -157,18 +178,34 @@ export class N3EntityIndex {
       return s && p && o && (isDefaultGraph(term.graph) || (g = this._termToNumericId(term.graph))) &&
         this._ids[g ? `.${s}.${p}.${o}.${g}` : `.${s}.${p}.${o}`];
     }
-    return this._ids[termToId(term)];
+    return typeof term === 'string' ? this._stringToNumericId(term) : this._ids[entityKey(term)];
+  }
+
+  // Returns the numeric id of a term given as a string id
+  _stringToNumericId(term) {
+    // The string is the key unless it is an IRI starting with <. Read the first character
+    // from the stored key after a match, which is cheaper than from a concatenated string.
+    const id = this._ids[term];
+    if (id ? this._entities[id].charCodeAt(0) !== 0x3C : term.charCodeAt(0) !== 0x3C)
+      return id;
+    return term === '<>' ? id : this._ids[`<${term}>`];
   }
 
   _termToNewNumericId(term) {
+    if (typeof term === 'string')
+      return this._stringToNumericId(term) || this._addEntity(entityKey(term));
     // This assumes that no graph term is present - we may wish to error if there is one
     const str = term && term.termType === 'Quad' ?
       `.${this._termToNewNumericId(term.subject)}.${this._termToNewNumericId(term.predicate)}.${this._termToNewNumericId(term.object)}${
         isDefaultGraph(term.graph) ? '' : `.${this._termToNewNumericId(term.graph)}`
       }`
-      : termToId(term);
+      : entityKey(term);
 
-    return this._ids[str] || (this._ids[this._entities[++this._id] = str] = this._id);
+    return this._ids[str] || this._addEntity(str);
+  }
+
+  _addEntity(key) {
+    return this._ids[this._entities[++this._id] = key] = this._id;
   }
 
   createBlankNode(suggestedName) {
@@ -1010,7 +1047,7 @@ export default class N3Store {
         if (!first)
           malformed = onError(current, 'has no list head');
         else
-          items.unshift(first.object);
+          items.push(first.object);
         current = parent && parent.subject;
       }
 
@@ -1018,12 +1055,16 @@ export default class N3Store {
       if (malformed)
         remove = false;
       else {
+        // Items were collected from the tail to the head
+        items.reverse();
         // Store the list under the value of its head
         if (head)
           lists[head[headPos].value] = items;
         // Leave lists with extra arcs fully intact; otherwise queue this list once.
-        if (remove && !extraArcs)
-          toRemove.push(...listQuads);
+        if (remove && !extraArcs) {
+          for (let i = 0; i < listQuads.length; i++)
+            toRemove.push(listQuads[i]);
+        }
       }
     });
 
@@ -1369,14 +1410,19 @@ function validateMatchSemantics(semantics = 'lazy') {
   return semantics;
 }
 
+// Returns the graph of a triple term, which plain objects may omit for the default graph
+function graphOf(quad) {
+  return quad.graph || '';
+}
+
 // Returns whether two terms or term IDs are the same; triple terms are compared by their components.
 function sameTerm(left, right) {
   if (left.termType !== 'Quad' && right.termType !== 'Quad')
-    return termToId(left) === termToId(right);
+    return entityKey(left) === entityKey(right);
   // Compare components, since triple terms from other libraries may lack `equals`
   return left.termType === right.termType &&
     sameTerm(left.subject, right.subject) && sameTerm(left.predicate, right.predicate) &&
-    sameTerm(left.object, right.object) && sameTerm(left.graph, right.graph);
+    sameTerm(left.object, right.object) && sameTerm(graphOf(left), graphOf(right));
 }
 
 // Returns the intersection of two quad patterns, or false if they conflict.
