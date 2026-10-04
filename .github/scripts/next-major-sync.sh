@@ -43,14 +43,26 @@ commit_record() {
     print join("\n", grep { !/^(?:tree|parent|committer|gpgsig|gpgsig-sha256) / } split /\n(?! )/, $head), "\n\n", $body'
 }
 
-# The lines a commit adds and removes, byte for byte and in order, outside the given paths. Only
-# blob ids and hunk headers (line numbers and function context) are dropped, since a rebase onto
-# a newer main changes those.
+# The lines a commit adds and removes, byte for byte and in order, outside the given paths, as
+# the given diff algorithm aligns them. Only blob ids and hunk headers (line numbers and function
+# context) are dropped, since a rebase onto a newer main changes those.
 changes() {
-  local commit=$1
-  shift
-  git diff --unified=0 --no-color --no-ext-diff --no-renames "$commit^" "$commit" -- . "${@/#/:(exclude,literal)}" |
+  local algorithm=$1 commit=$2
+  shift 2
+  git diff --diff-algorithm="$algorithm" --unified=0 --no-color --no-ext-diff --no-renames "$commit^" "$commit" -- . "${@/#/:(exclude,literal)}" |
     sed -E -e '/^index [0-9a-f]+\.\.[0-9a-f]+/d' -e 's/^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@.*/@@/'
+}
+
+# Succeeds if two commits add and remove the same lines outside the given paths. A diff's
+# alignment can change with the lines around a change, so an unchanged commit on a newer main may
+# diff differently; each algorithm is tried in turn, always the same one for both commits.
+same_change() {
+  local a=$1 b=$2 algorithm
+  shift 2
+  for algorithm in myers histogram patience; do
+    cmp -s <(changes "$algorithm" "$a" "$@") <(changes "$algorithm" "$b" "$@") && return 0
+  done
+  return 1
 }
 
 # Succeeds if two ranges hold the same number of commits and each pair, compared on its own, has
@@ -65,7 +77,7 @@ same_commits() {
   [ "${#a[@]}" -eq "${#b[@]}" ] || return 1
   for i in "${!a[@]}"; do
     cmp -s <(commit_record "${a[$i]}") <(commit_record "${b[$i]}") &&
-      cmp -s <(changes "${a[$i]}" "$@") <(changes "${b[$i]}" "$@") || return 1
+      same_change "${a[$i]}" "${b[$i]}" "$@" || return 1
   done
 }
 
