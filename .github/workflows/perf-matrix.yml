@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        branch: [perf/writer-prefix-matcher, perf/store-merge-objects, fix/import-return-promise, perf/relative-iri-dot-check, perf/store-size-shortcuts, feat/match-bgp, feat/writer-n3-formulas, fix/canonical-escapes, fix/canonical-ntriples, perf/sync-parse-streaming, perf/n3-scope-lookups, fix/lexer-long-token-error, feat/parser-directives, perf/sticky-lexer, perf/n3-verb-lookahead, feat/writer-extension-hooks, fix/lexer-stream-chunks, fix/baseiri-colon-segment, fix/store-named-node-keys, fix/fromterm-direction, fix/reasoner-variable-map, fix/addall-shared-graph, fix/linear-regexes, fix/extract-lists, fix/writer-prefixed-iri-local-name, fix/triple-term-depth, fix/iri-resolution-empty-path, fix/escape-regex, feat/hide-term-constructors, feat/triple-term-ids, feat/writer-emit-base-default, feat/implicit-empty-prefix-default, feat/formula-scoped-blank-nodes-default, feat/empty-formula-as-true-default, feat/store-match-pattern, feat/parser-validation-modes, feat/writer-graphs-option, fix/659-escape-iris-and-control-chars, perf/cache-literal-getters]
+        branch: [perf/cache-literal-getters, tmp/lit-diag-writer-base]
     steps:
       - uses: actions/checkout@v7
         with:
