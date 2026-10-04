@@ -365,21 +365,37 @@ describe('Writer', () => {
     );
 
     it(
-      'should only treat IRIs with an exact prefix name as prefixed names',
-      shouldSerialize({ prefixes: { 'a.b': 'http://a.org/' } },
-                      ['a.b:s', 'axb:p', 'http://a.org/o'],
-                      '@prefix a.b: <http://a.org/>.\n\n' +
-                      'a.b:s <axb:p> a.b:o.\n'),
-    );
-
-    it(
-      'should expand prefixes when possible',
+      'should not write IRIs that look like prefixed names as prefixed names',
       shouldSerialize({ prefixes: { a: 'http://a.org/', b: 'http://a.org/b#' } },
                       ['a:bc', 'b:ef', 'c:bhi'],
                       '@prefix a: <http://a.org/>.\n' +
                       '@prefix b: <http://a.org/b#>.\n\n' +
-                      'a:bc b:ef <c:bhi>.\n'),
+                      '<a:bc> <b:ef> <c:bhi>.\n'),
     );
+
+    it('should round-trip IRIs whose scheme matches a prefix name', async () => {
+      const writer = new Writer({ prefixes: { ex: 'http://example.org/', urn: 'http://example.org/urn/' } });
+      const quad = new Quad(new NamedNode('ex:foo'), new NamedNode('http://example.org/p'),
+                            new NamedNode('urn:isbn:0451450523'));
+      writer.addQuad(quad);
+      const output = await new Promise(resolve => writer.end((error, result) => resolve(result)));
+      expect(output).toBe('@prefix ex: <http://example.org/>.\n' +
+                          '@prefix urn: <http://example.org/urn/>.\n\n' +
+                          '<ex:foo> ex:p <urn:isbn:0451450523>.\n');
+      expect(new Parser().parse(output)).toStrictEqual([quad]);
+    });
+
+    it('should round-trip every IRI that looks like a prefixed name', async () => {
+      const prefixes = { 'a': 'http://a.org/', 'a.b': 'http://ab.org/', 'x': 'http://x.org/', 'm': 'http://m.org/' };
+      const iris = ['a:é', 'a:b:c', 'a:b%20c', 'a:b..c', 'a.b:c', 'x:y', 'm:foo', 'a:'];
+      const quads = iris.map(iri => new Quad(new NamedNode(iri), new NamedNode('http://a.org/p'), new NamedNode(iri)));
+      const writer = new Writer({ prefixes });
+      writer.addQuads(quads);
+      const output = await new Promise(resolve => writer.end((error, result) => resolve(result)));
+      for (const iri of iris)
+        expect(output).toContain(`<${iri}> a:p <${iri}>.`);
+      expect(new Parser().parse(output)).toStrictEqual(quads);
+    });
 
     it(
       'should not repeat the same subjects',
@@ -580,6 +596,18 @@ describe('Writer', () => {
       },
     );
 
+    it('uses each prefix added between quads', async () => {
+      const writer = new Writer();
+      writer.addPrefix('a', 'b#');
+      writer.addPrefix('c', 'd#');
+      writer.addQuad(new Quad(new NamedNode('b#s'), new NamedNode('d#p'), new NamedNode('f#o')));
+      writer.addPrefix('e', 'f#');
+      writer.addQuad(new Quad(new NamedNode('b#s'), new NamedNode('d#p'), new NamedNode('f#o')));
+      const output = await end(writer);
+      expect(output).toBe('@prefix a: <b#>.\n\n@prefix c: <d#>.\n\na:s c:p <f#o>.\n' +
+                          '@prefix e: <f#>.\n\na:s c:p e:o.\n');
+    });
+
     it('should not write prefixes in N-Triples mode', async () => {
       const writer = new Writer({ format: 'N-Triples', prefixes: { a: 'b#' } });
       let called = false;
@@ -594,7 +622,7 @@ describe('Writer', () => {
     });
 
     it('uses a base IRI when given', async () => {
-      const writer = new Writer({ baseIRI: 'http://example.org/foo/' });
+      const writer = new Writer({ baseIRI: 'http://example.org/foo/', writeBase: false });
       writer.addQuad(new Quad(
         new NamedNode('http://example.org/foo/'),
         new NamedNode('http://example.org/foo/#b'),
@@ -604,7 +632,7 @@ describe('Writer', () => {
     });
 
     it('uses a base IRI to relativize a graph to the empty IRI', async () => {
-      const writer = new Writer({ baseIRI: 'http://example.org/foo/' });
+      const writer = new Writer({ baseIRI: 'http://example.org/foo/', writeBase: false });
       writer.addQuad(new Quad(
         new NamedNode('http://example.org/foo/a'),
         new NamedNode('http://example.org/foo/b'),
@@ -615,7 +643,7 @@ describe('Writer', () => {
     });
 
     it('uses partially match base IRIs', async () => {
-      const writer = new Writer({ baseIRI: 'https://pod.example/profile/card' });
+      const writer = new Writer({ baseIRI: 'https://pod.example/profile/card', writeBase: false });
       writer.addQuad(new Quad(
           new NamedNode('https://pod.example/profile/card#me'),
           new NamedNode('http://www.w3.org/2002/07/owl#sameAs'),
@@ -626,10 +654,11 @@ describe('Writer', () => {
       );
     });
 
-    it('does not write a base directive by default', async () => {
+    it('does not write a base directive when writeBase is false', async () => {
       const writer = new Writer({
         prefixes: { ex: 'http://other.example/ns#' },
         baseIRI: 'http://example.org/foo/',
+        writeBase: false,
       });
       writer.addQuad(new Quad(
         new NamedNode('http://example.org/foo/bar'),
@@ -640,8 +669,8 @@ describe('Writer', () => {
                           '<bar> ex:p <baz>.\n');
     });
 
-    it('writes a base directive with the writeBase option', async () => {
-      const writer = new Writer({ baseIRI: 'http://example.org/foo/', writeBase: true });
+    it('writes a base directive by default when a base IRI is given', async () => {
+      const writer = new Writer({ baseIRI: 'http://example.org/foo/' });
       writer.addQuad(new Quad(
         new NamedNode('http://example.org/foo/'),
         new NamedNode('http://example.org/foo/#b'),
@@ -910,8 +939,8 @@ describe('Writer', () => {
       expect(output).toBe('(<a1> "b" "c") <d> <e>.\n');
     });
 
-    it('should serialize a blank node in an N3 list with a valid label when formulaScopedBlankNodes is set', async () => {
-      const quads = new Parser({ format: 'text/n3', formulaScopedBlankNodes: true }).parse('<a> <b> (_:x). _:x <c> <d>.');
+    it('should serialize a blank node in an N3 list with a valid label by default', async () => {
+      const quads = new Parser({ format: 'text/n3' }).parse('<a> <b> (_:x). _:x <c> <d>.');
       const writer = new Writer();
       writer.addQuads(quads);
       const output = await end(writer);
@@ -919,13 +948,13 @@ describe('Writer', () => {
       expect(() => new Parser().parse(output)).not.toThrow();
     });
 
-    it('should serialize a blank node in an N3 list with an invalid label by default', async () => {
-      const quads = new Parser({ format: 'text/n3' }).parse('<a> <b> (_:x). _:x <c> <d>.');
+    it('should serialize a blank node in an N3 list with an invalid label when formulaScopedBlankNodes is false', async () => {
+      const quads = new Parser({ format: 'text/n3', formulaScopedBlankNodes: false }).parse('<a> <b> (_:x). _:x <c> <d>.');
       const writer = new Writer();
       writer.addQuads(quads);
       const output = await end(writer);
-      // The default rescoping produces the label `_:.x`,
-      // which fails to reparse (#332; the default flips in #630)
+      // The legacy rescoping produces the label `_:.x`,
+      // which fails to reparse (#332, #630)
       expect(() => new Parser().parse(output)).toThrow();
     });
 
@@ -945,6 +974,15 @@ describe('Writer', () => {
           '<a3> <b> _:m3.\n');
       },
     );
+
+    it('should only treat own properties of options.lists as list heads', async () => {
+      const writer = new Writer({ lists: { l1: [new NamedNode('c')] } });
+      writer.addQuad(new BlankNode('toString'), new NamedNode('b'), new BlankNode('constructor'));
+      writer.addQuad(new BlankNode('l1'), new NamedNode('b'), new BlankNode('__proto__'));
+      const output = await end(writer);
+      expect(output).toBe('_:toString <b> _:constructor.\n' +
+        '(<c>) <b> _:__proto__.\n');
+    });
 
     it('should accept triples in bulk', async () => {
       const writer = new Writer();
@@ -5828,8 +5866,8 @@ describe('Writer', () => {
         // the written base directive must suffice to restore the IRIs
         const baselessParser = new Parser();
         for (const { input, expected } of cases) {
-          const writer = new Writer({ baseIRI });
-          const baseWriter = new Writer({ baseIRI, writeBase: true });
+          const writer = new Writer({ baseIRI, writeBase: false });
+          const baseWriter = new Writer({ baseIRI });
           const quad = new Quad(new NamedNode('urn:ex:s'), new NamedNode('urn:ex:p'), new NamedNode(input));
           it(`relativizes <${input}> to <${expected}>`, async () => {
             writer.addQuad(quad);
