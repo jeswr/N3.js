@@ -1,0 +1,47 @@
+name: Perf matrix (fork only)
+
+# Temporary: runs the expanded benchmark suite for open branches against the
+# upstream main they branched from. Not for upstream.
+on:
+  push:
+    branches: [perf-matrix-run]
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: ${{ matrix.branch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [perf/writer-prefix-matcher, perf/store-merge-objects, fix/import-return-promise, perf/relative-iri-dot-check, perf/store-size-shortcuts, feat/match-bgp, feat/writer-n3-formulas, fix/canonical-escapes, fix/canonical-ntriples, perf/sync-parse-streaming, perf/n3-scope-lookups, fix/lexer-long-token-error, feat/parser-directives, perf/sticky-lexer, perf/n3-verb-lookahead, feat/writer-extension-hooks, fix/lexer-stream-chunks, fix/baseiri-colon-segment, fix/store-named-node-keys, fix/fromterm-direction, fix/reasoner-variable-map, fix/addall-shared-graph, fix/linear-regexes, fix/extract-lists, fix/writer-prefixed-iri-local-name, fix/triple-term-depth, fix/iri-resolution-empty-path, fix/escape-regex, feat/hide-term-constructors, feat/triple-term-ids, feat/writer-emit-base-default, feat/implicit-empty-prefix-default, feat/formula-scoped-blank-nodes-default, feat/empty-formula-as-true-default, feat/store-match-pattern, feat/parser-validation-modes, feat/writer-graphs-option, fix/659-escape-iris-and-control-chars, perf/cache-literal-getters]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: tools
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.branch }}
+          path: head
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - name: Base
+        working-directory: head
+        run: |
+          git fetch -q https://github.com/rdfjs/N3.js main:upstream-main
+          base=$(git merge-base HEAD upstream-main)
+          git worktree add ../base "$base"
+          echo "Comparing $(git rev-parse --short HEAD) with merge base $(git rev-parse --short $base)"
+      - name: Build
+        run: |
+          (cd tools && npm ci --ignore-scripts)
+          (cd head && npm ci --ignore-scripts && npx babel src -d lib)
+          (cd base && npm ci --ignore-scripts && npx babel src -d lib)
+      - name: Compare
+        working-directory: tools
+        run: node perf/ci/compare.js --base ../base/lib --head ../head/lib --json ../results.json
